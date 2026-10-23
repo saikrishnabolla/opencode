@@ -646,6 +646,12 @@ export const dict = {
   "common.time.hoursAgo.short": "{{count}}h ago",
   "common.time.daysAgo.short": "{{count}}d ago",
 
+  "sidebar.projects.more": "Show more",
+  "sidebar.projects.search": "Search projects and sessions",
+  "sidebar.projects.manage": "Manage projects and servers",
+  "sidebar.projects.offline": "Offline",
+  "sidebar.projects.new": "New session in {{project}}",
+  "sidebar.projects.unread": "Unread",
   "sidebar.settings": "Settings",
   "sidebar.help": "Help",
   "sidebar.project.recentSessions": "Recent sessions",

@@ -10,20 +10,24 @@ import { TitlebarRightProvider } from "@/shell/titlebar/right-slot"
 import { useSettingsSurface } from "@/settings/surface"
 import { useSettings } from "@/settings/model"
 import { ExtensionServerCover } from "@/runtime/extension/server-shell"
+import { useLanguage } from "@/runtime/i18n/language"
+import { ProjectSidebar } from "@/shell/layout/project-sidebar"
 import { ExtensionSlot } from "@/runtime/extension/render"
 
 export default function Layout(props: ParentProps) {
+  const language = useLanguage()
   const platform = usePlatform()
   const settings = useSettingsSurface()
   const preferences = useSettings()
   const mobile = createMediaQuery("(max-width: 767px)")
 
-  const [state, setState] = createStore<{ tabsWidth: number; tabsMount: HTMLElement | undefined }>({
-    tabsWidth: 260,
-    tabsMount: undefined,
+  const [state, setState] = createStore<{ tabsWidth: number; projectsOpen: boolean }>({
+    tabsWidth: 300,
+    projectsOpen: false,
   })
 
-  const verticalTabs = () => preferences.appearance.tabLayout() === "vertical" && !mobile()
+  const verticalTabs = () => preferences.appearance.tabLayout() === "vertical"
+  const showProjects = () => verticalTabs() && (!mobile() || state.projectsOpen)
   const bottomTitlebar = () => mobile() && preferences.general.mobileTitlebarPosition() === "bottom"
 
   return (
@@ -45,11 +49,12 @@ export default function Layout(props: ParentProps) {
             : "max(0px, calc(8px - var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))))",
         }}
       >
-        <Titlebar verticalTabs={verticalTabs() ? { mount: state.tabsMount } : undefined} />
-        <div class="flex flex-1 min-h-0 min-w-0 flex-row">
-          <Show when={verticalTabs()}>
+        <Titlebar verticalTabs={verticalTabs() && !mobile() ? {} : undefined} />
+        <Show when={mobile() && verticalTabs()}><button type="button" class="project-sidebar-mobile-toggle" aria-expanded={state.projectsOpen} onClick={() => setState("projectsOpen", !state.projectsOpen)}>{language.t("settings.projects.title")}</button></Show>
+        <div class="relative flex flex-1 min-h-0 min-w-0 flex-row">
+          <Show when={showProjects()}>
             <aside
-              ref={(element) => setState("tabsMount", element)}
+              classList={{ "project-sidebar-mobile": mobile() }}
               data-slot="vertical-tabs-sidebar"
               class="relative flex h-full min-h-0 shrink-0 flex-col bg-v2-background-bg-deep pe-0.5 ps-2.5 pb-[var(--shell-bottom-inset,8px)] pt-[var(--shell-top-inset,8px)]"
               style={{
@@ -57,14 +62,15 @@ export default function Layout(props: ParentProps) {
                 "padding-bottom": "max(10px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))",
               }}
             >
-              <ResizeHandle
+              <ProjectSidebar onNavigate={() => setState("projectsOpen", false)} />
+              <Show when={!mobile()}><ResizeHandle
                 class="-end-2"
                 direction="horizontal"
                 size={state.tabsWidth}
-                min={140}
+                min={240}
                 max={520}
                 onResize={(width) => setState("tabsWidth", width)}
-              />
+              /></Show>
             </aside>
           </Show>
           {/* Size containment collapses percentage-height descendants in WebKit. */}
