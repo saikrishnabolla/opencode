@@ -1,6 +1,7 @@
+import { createMemoryComposerState } from "@/composer/state"
 import { ServerConnection } from "@/runtime/server/registry"
 import { expect, test } from "bun:test"
-import { catalogProjectForDirectory, groupSidebarEntries, sidebarCatalog, sidebarDrafts, sidebarProjects } from "./project-sidebar-catalog"
+import { catalogProjectForDirectory, groupSidebarEntries, sidebarCatalog, sidebarDrafts, sidebarDraftVisible, sidebarProjects } from "./project-sidebar-catalog"
 
 const oracle = ServerConnection.key({ type: "http", http: { url: "https://oracle.test" } })
 
@@ -94,4 +95,19 @@ test("an added experiment inside an existing project keeps its own sessions", ()
   expect(catalogProjectForDirectory(nested, "/personal/hackathon")?.name).toBe("Hackathon")
   expect(catalogProjectForDirectory(nested, "/personal/hackathon/src")?.name).toBe("Hackathon")
   expect(catalogProjectForDirectory(nested, "/personal/other")?.name).toBe("General")
+})
+
+test("inactive blank drafts stay out of the sidebar while active drafts and unsent content remain", () => {
+  const composer = createMemoryComposerState()
+  expect(sidebarDraftVisible(false, composer)).toBe(false)
+  expect(sidebarDraftVisible(true, composer)).toBe(true)
+  composer.set([{ type: "text", content: "  \n", start: 0, end: 3 }])
+  expect(sidebarDraftVisible(false, composer)).toBe(false)
+  composer.set([{ type: "text", content: "Unsent work", start: 0, end: 11 }])
+  expect(sidebarDraftVisible(false, composer)).toBe(true)
+  composer.set([{ type: "image", id: "image", filename: "image.png", mime: "image/png", blob: { id: "image", url: "" } }])
+  expect(sidebarDraftVisible(false, composer)).toBe(true)
+  composer.reset()
+  composer.context.add({ type: "file", path: "/repo/file.ts" })
+  expect(sidebarDraftVisible(false, composer)).toBe(true)
 })

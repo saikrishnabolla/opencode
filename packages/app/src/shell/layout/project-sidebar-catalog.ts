@@ -1,3 +1,4 @@
+import type { ComposerState } from "@/composer/state"
 import type { ManagedProjectCatalog } from "@/runtime/server/managed"
 import type { Tab, DraftTab } from "@/shell/tabs/tabs"
 import type { ServerConnection } from "@/runtime/server/registry"
@@ -65,4 +66,11 @@ export function sidebarDrafts(tabs: readonly Tab[], server: ServerConnection.Key
   return tabs.filter((tab): tab is DraftTab => tab.type === "draft" && tab.server === server &&
     pathKey(catalogProjectForDirectory(catalog, tab.directory)?.worktree ?? tab.directory) === pathKey(project.worktree),
   ).toReversed()
+}
+
+export function sidebarDraftVisible(active: boolean, composer: ComposerState) {
+  return active || (composer.ready() && (
+    composer.current().some((part) => part.type !== "text" || part.content.trim().length > 0) ||
+    composer.context.items().length > 0
+  ))
 }

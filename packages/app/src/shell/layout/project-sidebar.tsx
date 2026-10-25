@@ -8,6 +8,7 @@ import { displayName } from "@opencode/ui/project-avatar"
 import { useGlobal } from "@/runtime/server/runtime"
 import { ServerConnection, serverName, useServers } from "@/runtime/server/registry"
 import { useLanguage } from "@/runtime/i18n/language"
+import { createDraftComposerState } from "@/composer/state"
 import { useTabs } from "@/shell/tabs/tabs"
 import { useLayout } from "@/shell/state/layout"
 import { createHomeController } from "@/home/model"
@@ -20,7 +21,7 @@ import type { DraftTab } from "@/shell/tabs/tabs"
 import type { LocalProject } from "@/shell/state/layout"
 import { addManagedExperiment, loadManagedProjects, ManagedExperimentError } from "@/runtime/server/managed"
 import type { ManagedProjectCatalog } from "@/runtime/server/managed"
-import { catalogProjectForDirectory, groupSidebarEntries, sidebarCatalog, sidebarDrafts, sidebarProjects } from "./project-sidebar-catalog"
+import { catalogProjectForDirectory, groupSidebarEntries, sidebarCatalog, sidebarDrafts, sidebarDraftVisible, sidebarProjects } from "./project-sidebar-catalog"
 import { useDirectoryPicker } from "@/workspaces/selection/picker"
 import "./project-sidebar.css"
 
@@ -150,6 +151,18 @@ function createServerProjects(props: { conn: ServerConnection.Any; query: string
   const global = useGlobal()
   const tabs = useTabs()
   const language = useLanguage()
+  const layout = useLayout()
+  const draftStates = mapArray(
+    () => tabs.store.filter((tab): tab is DraftTab => tab.type === "draft" && tab.server === ServerConnection.key(props.conn)),
+    (tab) => ({ tab, composer: tabs.state(tab, "prompt", () => createDraftComposerState(tab.draftID)) }),
+  )
+  const visibleDrafts = createMemo(() => {
+    const route = layout.route()
+
+    return draftStates().filter(({ tab, composer }) =>
+      sidebarDraftVisible(route.type === "draft" && route.draftID === tab.draftID, composer),
+    ).map(({ tab }) => tab)
+  })
   const key = () => ServerConnection.key(props.conn)
   const ctx = () => global.serverCtx(key())
   const health = () => global.servers.health[key()]
@@ -181,7 +194,7 @@ function createServerProjects(props: { conn: ServerConnection.Any; query: string
     const context = ctx()
 
     const list: LocalProject[] = [
-      ...tabs.store.flatMap((tab) => tab.type === "draft" && tab.server === key() ? [{ worktree: tab.directory, expanded: true }] : []),
+      ...visibleDrafts().map((tab) => ({ worktree: tab.directory, expanded: true })),
       ...(context?.projects.list() ?? []),
       ...(context?.sync.data.project.filter((project) => project.id !== "global").map((project) => ({ ...project, expanded: true })) ?? []),
       ...records().map((record) => record.project),
@@ -194,7 +207,7 @@ function createServerProjects(props: { conn: ServerConnection.Any; query: string
     project,
     collection: catalog()?.projects.find((entry) => entry.directory === project.worktree)?.group,
     sessions: records().filter((record) => record.project.worktree === project.worktree),
-    drafts: sidebarDrafts(tabs.store, key(), project, catalog()),
+    drafts: sidebarDrafts(visibleDrafts(), key(), project, catalog()),
   })).filter((group) => !props.query || (group.collection ?? "").toLowerCase().includes(props.query.toLowerCase()) || displayName(group.project).toLowerCase().includes(props.query.toLowerCase()) || group.sessions.some((record) => (record.session.title ?? "").toLowerCase().includes(props.query.toLowerCase())) || (group.drafts.length > 0 && language.t("command.session.new").toLowerCase().includes(props.query.toLowerCase()))))
 
   const label = () => ServerConnection.local(props.conn) ? language.t("titlebar.channel.local") : props.conn.displayName ?? new URL(props.conn.http.url).hostname.split(".")[0]
