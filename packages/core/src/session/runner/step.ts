@@ -243,9 +243,7 @@ export const make = Effect.gen(function* () {
                     .files({ from: startSnapshot, to: snapshot })
                     .pipe(Effect.orElseSucceed(() => undefined))
               : undefined
-          const usage = record.finish
-            ? { cost: SessionUsage.calculateCost(input.model.cost, record.finish.tokens), tokens: record.finish.tokens }
-            : undefined
+          const usage = record.finish ? SessionUsage.record(record.finish.usage, input.model.cost) : undefined
           if (record.failure) yield* publisher.publishStepFailure({ ...usage, snapshot, files })
           if (record.finish && usage && !record.failure)
             yield* bus.publish(SessionEvent.Step.Ended, {
@@ -253,7 +251,7 @@ export const make = Effect.gen(function* () {
               assistantMessageID: yield* publisher.startAssistant(),
               finish: record.finish.finish,
               rawFinish: record.finish.rawFinish,
-              providerState: record.finish.providerState,
+              native: record.finish.native,
               ...usage,
               snapshot,
               files,

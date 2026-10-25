@@ -163,6 +163,61 @@ describe("Google Vertex Interactions", () => {
     )
   })
 
+  it.effect("ignores unknown stream events but rejects malformed known ones", () =>
+    Effect.gen(function* () {
+      const model = GoogleVertexInteractions.configure({ apiKey: "vertex-key" }).model("gemini-3.8-flash")
+      const generate = (...events: ReadonlyArray<unknown>) =>
+        LLMClient.generate(LLM.request({ model, prompt: "Hi" })).pipe(
+          Effect.provide(fixedResponse(sseEvents(...events))),
+        )
+      const response = yield* generate(
+        { event_type: "step.start", index: 0, step: { type: "model_output" } },
+        { event_type: "interaction.heartbeat" },
+        { event_type: "step.delta", index: 0, delta: { type: "text", text: "OK" } },
+        { event_type: "step.stop", index: 0 },
+        { event_type: "interaction.completed", interaction: { status: "completed" } },
+      )
+      expect(response.text).toBe("OK")
+
+      const error = yield* generate(
+        { event_type: "step.delta", delta: { type: "text", text: "OK" } },
+        { event_type: "interaction.completed", interaction: { status: "completed" } },
+      ).pipe(Effect.flip)
+      expect(error.reason._tag).toBe("InvalidProviderOutput")
+    }),
+  )
+
+  it.effect("classifies failed interactions by their reported errors", () =>
+    Effect.gen(function* () {
+      const model = GoogleVertexInteractions.configure({ apiKey: "vertex-key" }).model("gemini-3.8-flash")
+      const cases = [
+        {
+          errors: [{ code: "permission_denied", message: "Access denied" }],
+          tag: "Authentication",
+          message: "Access denied",
+        },
+        {
+          errors: [{ message: "Out of credits" }, { code: "insufficient_quota", message: "Add billing" }],
+          tag: "QuotaExceeded",
+          message: "Out of credits\nAdd billing",
+        },
+        { errors: [], tag: "UnknownProvider", message: "Google Interactions failed" },
+      ]
+      for (const item of cases) {
+        const event = { event_type: "interaction.completed", interaction: { status: "failed", errors: item.errors } }
+        const error = yield* LLMClient.generate(LLM.request({ model, prompt: "Hi" })).pipe(
+          Effect.provide(fixedResponse(sseEvents(event))),
+          Effect.flip,
+        )
+        expect([error.reason._tag, error.reason.message, error.reason.body]).toEqual([
+          item.tag,
+          item.message,
+          JSON.stringify(event),
+        ])
+      }
+    }),
+  )
+
   it.effect("round-trips tool signatures under Vertex metadata without enabling storage", () =>
     Effect.gen(function* () {
       const model = GoogleVertexInteractions.configure({

@@ -7,9 +7,12 @@ import { LayerNodePlatform } from "@opencode/util/effect/app-node-platform"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Bus } from "@opencode/core/bus"
 import { KV } from "@opencode/core/kv"
+import { Location } from "@opencode/core/location"
 import { Model } from "@opencode/core/model"
 import { bodyDigest, ModelsDev } from "@opencode/core/models-dev"
 import { Provider } from "@opencode/core/provider"
+import { AbsolutePath } from "@opencode/core/schema"
+import { location } from "./fixture/location"
 import { it } from "./lib/effect"
 
 const cacheKey = "models-dev:catalog"
@@ -82,6 +85,7 @@ const fixtureSnapshot = [
       },
     ],
     environment: ["ACME_API_KEY"],
+    types: new Map(),
   },
 ] satisfies readonly ModelsDev.Snapshot[]
 
@@ -144,6 +148,7 @@ const fixture2Snapshot = [
       },
     ],
     environment: ["BETA_API_KEY"],
+    types: new Map(),
   },
 ] satisfies readonly ModelsDev.Snapshot[]
 
@@ -288,6 +293,36 @@ describe("ModelsDev Service", () => {
       expect(result[2]?.models.find((model) => model.id === "custom-chat")?.package).toBe(
         "@opencode/ai/providers/azure/chat",
       )
+    }),
+  )
+
+  it.live("keeps typed models in the snapshot with their models.dev type", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      writeCache(cache, {
+        acme: {
+          ...fixture.acme,
+          models: {
+            ...fixture.acme.models,
+            "acme-live": {
+              ...fixture.acme.models["acme-1"],
+              id: "acme-live",
+              type: "realtime",
+              experimental: { modes: { fast: {} } },
+            },
+          },
+        },
+      })
+      const state = yield* Ref.make(initialState)
+      const [acme] = yield* provided(
+        state,
+        cache,
+        ModelsDev.Service.use((service) => service.get()),
+      )
+      expect(acme?.models.map((model) => model.id)).toEqual(
+        ["acme-1", "acme-live", "acme-live-fast"].map((id) => Model.ID.make(id)),
+      )
+      expect(Object.fromEntries(acme?.types ?? [])).toEqual({ "acme-live": "realtime", "acme-live-fast": "realtime" })
     }),
   )
 
@@ -482,6 +517,49 @@ describe("ModelsDev Service", () => {
         body: JSON.stringify(fixture2),
         digest: bodyDigest(JSON.stringify(fixture2)),
       })
+    }),
+  )
+
+  it.live("refresh publishes Refreshed globally across locations", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      writeCache(cache, fixture, Date.now() - 10 * 60 * 1000)
+      const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
+      yield* provided(
+        state,
+        cache,
+        Effect.gen(function* () {
+          const svc = yield* ModelsDev.Service
+          const bus = yield* Bus.Service
+          const refreshed = yield* bus
+            .subscribe(ModelsDev.Event.Refreshed)
+            .pipe(
+              Stream.take(1),
+              Stream.runCollect,
+              Effect.provideService(
+                Location.Service,
+                Location.Service.of(location({ directory: AbsolutePath.make("/other-location") })),
+              ),
+              Effect.forkScoped,
+            )
+            .pipe(
+              Effect.flatMap((fiber) =>
+                Effect.gen(function* () {
+                  yield* Effect.yieldNow
+                  yield* svc.refresh(true).pipe(
+                    Effect.provideService(
+                      Location.Service,
+                      Location.Service.of(location({ directory: AbsolutePath.make("/initial-location") })),
+                    ),
+                  )
+                  return yield* Fiber.join(fiber)
+                }),
+              ),
+            )
+          expect(refreshed.length).toBe(1)
+          expect(refreshed[0]?.location).toBeUndefined()
+        }),
+      )
     }),
   )
 

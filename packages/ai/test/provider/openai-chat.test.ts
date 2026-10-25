@@ -64,6 +64,54 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
+  it.effect("omits stream usage options when compatibility disables them", () =>
+    Effect.gen(function* () {
+      const prepared = yield* compileRequest(
+        LLM.request({ model: LanguageModel.update(model, { compatibility: { streamUsage: false } }), prompt: "Hello" }),
+      )
+
+      expect(prepared.body).not.toHaveProperty("stream_options")
+    }),
+  )
+
+  it.effect("sends store only to OpenAI and Azure unless compatibility opts in", () =>
+    Effect.gen(function* () {
+      const compatible = OpenAICompatible.configure({ baseURL: "https://api.compatible.test/v1", apiKey: "test" })
+      const omitted = yield* compileRequest(
+        LLM.request({ model: compatible.model("compatible-model"), prompt: "Hello", providerOptions: { store: true } }),
+      )
+      const optedIn = yield* compileRequest(
+        LLM.request({
+          model: LanguageModel.update(compatible.model("compatible-model"), {
+            compatibility: { supportsStore: true },
+          }),
+          prompt: "Hello",
+        }),
+      )
+      const openaiHost = yield* compileRequest(
+        LLM.request({
+          model: OpenAICompatible.configure({ baseURL: "https://api.openai.com/v1", apiKey: "test" }).model(
+            "gpt-4o-mini",
+          ),
+          prompt: "Hello",
+        }),
+      )
+      const azure = yield* compileRequest(
+        LLM.request({
+          model: Azure.configure({ baseURL: "https://opencode-test.openai.azure.com/openai/", apiKey: "test" }).chat(
+            "gpt-4o-mini",
+          ),
+          prompt: "Hello",
+        }),
+      )
+
+      expect(omitted.body).not.toHaveProperty("store")
+      expect(optedIn.body.store).toBe(false)
+      expect(openaiHost.body.store).toBe(false)
+      expect(azure.body.store).toBe(false)
+    }),
+  )
+
   it.effect("lowers chronological system updates to escaped user wrappers in order", () =>
     Effect.gen(function* () {
       const prepared = yield* compileRequest(
@@ -1129,6 +1177,42 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
+  it.effect("reports the cost the endpoint billed", () =>
+    Effect.gen(function* () {
+      const response = yield* LLMClient.generate(request).pipe(
+        Effect.provide(
+          fixedResponse(
+            sseEvents(
+              deltaChunk({ content: "Hello" }, "stop"),
+              usageChunk({ prompt_tokens: 5, completion_tokens: 2, cost: 0, opencode: { allowance: 0.0042 } }),
+            ),
+          ),
+        ),
+      )
+
+      expect(response.usage).toMatchObject({ inputTokens: 5, outputTokens: 2, cost: 0 })
+    }),
+  )
+
+  it.effect("drops a malformed billed cost without failing the stream", () =>
+    Effect.gen(function* () {
+      const response = yield* LLMClient.generate(request).pipe(
+        Effect.provide(
+          fixedResponse(
+            sseEvents(
+              deltaChunk({ content: "Hello" }, "stop"),
+              usageChunk({ prompt_tokens: 5, completion_tokens: 2, cost: -1, opencode: { allowance: "lots" } }),
+            ),
+          ),
+        ),
+      )
+
+      expect(response.text).toBe("Hello")
+      expect(response.usage).toMatchObject({ inputTokens: 5, outputTokens: 2 })
+      expect(response.usage?.cost).toBeUndefined()
+    }),
+  )
+
   it.effect("uses the configured provider metadata namespace for reasoning and usage", () =>
     Effect.gen(function* () {
       const selected = LanguageModel.update(model, {
@@ -2024,47 +2108,14 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
-  it.effect("rejects unknown finish reasons without finalizing streamed tool calls", () =>
+  it.effect("maps unknown finish reasons to unknown and keeps the raw value", () =>
     Effect.gen(function* () {
-      const body = sseEvents(
-        deltaChunk({
-          tool_calls: [{ index: 0, id: "call_1", function: { name: "lookup", arguments: '{"query":"weather"' } }],
-        }),
-        deltaChunk({}, "future_reason"),
-      )
-      const events = yield* Ref.make<ReadonlyArray<LLMEvent>>([])
-      const error = yield* LLMClient.stream(
-        LLMRequest.update(request, {
-          tools: [ToolDefinition.make({ name: "lookup", description: "Lookup data", inputSchema: { type: "object" } })],
-        }),
-      ).pipe(
-        Stream.tap((event) => Ref.update(events, (current) => [...current, event])),
-        Stream.runDrain,
-        Effect.provide(fixedResponse(body)),
-        Effect.flip,
+      const response = yield* LLMClient.generate(request).pipe(
+        Effect.provide(fixedResponse(sseEvents(deltaChunk({ content: "Hello" }), deltaChunk({}, "future_reason")))),
       )
 
-      expect(error).toMatchObject({
-        reason: { _tag: "UnknownProvider" },
-        message: "Provider finish_reason: future_reason",
-      })
-      expect(yield* Ref.get(events)).toEqual([
-        { type: "step-start", index: 0 },
-        {
-          type: "tool-input-start",
-          id: "call_1",
-          name: "lookup",
-          providerExecuted: undefined,
-          providerMetadata: undefined,
-        },
-        {
-          type: "tool-input-delta",
-          id: "call_1",
-          name: "lookup",
-          text: '{"query":"weather"',
-          input: { query: "weather" },
-        },
-      ])
+      expect(response.text).toBe("Hello")
+      expect(response.finishReason).toEqual({ normalized: "unknown", raw: "future_reason" })
     }),
   )
 

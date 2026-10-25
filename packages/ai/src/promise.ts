@@ -1,12 +1,12 @@
 import { Effect, Layer, ManagedRuntime, Stream } from "effect"
 import { AIClient } from "./ai-client.js"
+import { Decision, type DecisionModel, type DecisionQuestions, type DecisionRequestInput } from "./decision.js"
 import type { AwaitOptions, Event, Generation, Snapshot } from "./generation.js"
 import { Image, type ImageModel, type ImageRequest, type ImageRequestInput } from "./image.js"
 import { LLM } from "./index.js"
 import { Media } from "./media.js"
-import { tryRequest } from "./media-model.js"
 import { RequestExecutor } from "./route/executor.js"
-import { AIError, InvalidRequestError, LanguageModel, LLMRequest } from "./schema/index.js"
+import { AIError, InvalidRequestError, LanguageModel, type LLMRequest } from "./schema/index.js"
 import type { RequestInput } from "./llm.js"
 import { Speech, type SpeechModel, type SpeechRequest, type SpeechRequestInput } from "./speech.js"
 import {
@@ -20,7 +20,7 @@ import { Video, type VideoModel, type VideoRequest, type VideoRequestInput } fro
 
 /**
  * Promise-first entrypoint for scripts and non-Effect callers. One `ManagedRuntime` hosts the LLM, image, video, speech,
- * and transcription clients over a request executor; every method runs the corresponding Effect API and rethrows
+ * transcription and decision clients over a request executor; every method runs the corresponding Effect API and rethrows
  * `AIError` unchanged. `file` and `write` load `node:fs/promises` on first use, so importing this module does not.
  */
 export interface Options {
@@ -93,9 +93,6 @@ export const make = (options: Options = {}) => {
     cancel: (options) => run(generation.cancel(), options),
   })
 
-  const llmRequest = (input: RequestInput | LLMRequest) =>
-    input instanceof LLMRequest ? Effect.succeed(input) : tryRequest(() => LLM.request(input))
-
   return {
     run,
     /** Decoded asset bytes, downloading `url` sources through the executor. */
@@ -137,9 +134,9 @@ export const make = (options: Options = {}) => {
     llm: {
       request: LLM.request,
       generate: <const Model extends LanguageModel>(input: RequestInput<Model> | LLMRequest, options?: RunOptions) =>
-        run(Effect.flatMap(llmRequest(input), LLM.generate), options),
+        run(LLM.generate(input), options),
       stream: <const Model extends LanguageModel>(input: RequestInput<Model> | LLMRequest, options?: RunOptions) =>
-        iterate(Stream.unwrap(Effect.map(llmRequest(input), LLM.stream)), options),
+        iterate(LLM.stream(input), options),
     },
     image: {
       request: Image.request,
@@ -198,6 +195,13 @@ export const make = (options: Options = {}) => {
       ) => run(Transcription.start(input), options).then(handle),
       resume: (model: TranscriptionModel, token: unknown, options?: RunOptions) =>
         run(Transcription.resume(model, token), options).then(handle),
+    },
+    decision: {
+      request: Decision.request,
+      generate: <const Model extends DecisionModel, const Questions extends DecisionQuestions>(
+        input: DecisionRequestInput<Model, Questions>,
+        options?: RunOptions,
+      ) => run(Decision.generate(input), options),
     },
     dispose: () => runtime.dispose(),
   }

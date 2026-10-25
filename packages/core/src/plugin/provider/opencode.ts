@@ -1,10 +1,23 @@
-import { Duration, Effect, Equal, Option, Schema, SchemaGetter, Scope, Semaphore, Stream } from "effect"
+import {
+  Clock,
+  Duration,
+  Effect,
+  Equal,
+  FiberHandle,
+  Option,
+  Schema,
+  SchemaGetter,
+  Scope,
+  Semaphore,
+  Stream,
+} from "effect"
 import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect/integration"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionHttpResponse } from "@opencode/plugin/effect/session"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { App } from "../../app.js"
 import { Bus } from "../../bus.js"
+import { ConsoleAccess } from "../../console-access.js"
 import { Credential } from "../../credential.js"
 import { Integration } from "../../integration.js"
 import { IntegrationConnection } from "../../integration/connection.js"
@@ -18,7 +31,6 @@ import { ConfigProvider } from "@opencode/schema/config/provider"
 import { Mcp } from "@opencode/schema/mcp"
 import { Money } from "@opencode/schema/money"
 
-const defaultServer = "https://opencode.ai/console"
 const clientID = "opencode-cli"
 const methodID = Integration.MethodID.make("device")
 // Drop statements whose action or effect is a value this version does not know, so a newer Console can
@@ -116,13 +128,13 @@ function oauth(http: HttpClient.HttpClient) {
           type: "string",
           format: "uri",
           hidden: true,
-          default: defaultServer,
+          default: ConsoleAccess.defaultServer,
         },
       ],
     },
     authorize: (answer) =>
       Effect.gen(function* () {
-        const server = yield* normalizeServer(answer.server ?? defaultServer)
+        const server = yield* normalizeServer(answer.server ?? ConsoleAccess.defaultServer)
         const device = yield* post(
           http,
           `${server}/auth/device/code`,
@@ -147,7 +159,7 @@ function oauth(http: HttpClient.HttpClient) {
       }),
     refresh: (credential) =>
       Effect.gen(function* () {
-        const response = yield* send(http, `${serverUrl(credential)}/auth/device/token`, {
+        const response = yield* send(http, `${ConsoleAccess.server(credential)}/auth/device/token`, {
           grant_type: "refresh_token",
           refresh_token: credential.refresh,
           client_id: clientID,
@@ -185,6 +197,7 @@ function oauth(http: HttpClient.HttpClient) {
 export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | ManagedPolicy.Service | Scope.Scope>({
   id: "opencode.provider.opencode",
   effect: Effect.fn(function* (ctx) {
+    const disableFree = ["1", "true"].includes(process.env.OPENCODE_DISABLE_FREE_MODELS?.toLowerCase() ?? "")
     const bus = yield* Bus.Service
     const client = yield* HttpClient.HttpClient
     // Every request here goes to the Console, which reads the User-Agent to tell which OpenCode a member runs
@@ -206,8 +219,11 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
     // Status last reported for the active connection, so inference failures can name the fix.
     let reported: IntegrationConnection.Status | undefined
     let explainers: Effect.Success<ReturnType<typeof ctx.session.hook>>[] = []
+    // When the last Console config load started, so rejected inference can reuse a recent status.
+    let checked = Number.NEGATIVE_INFINITY
 
     const load = Effect.fn("OpencodePlugin.load")(function* () {
+      checked = yield* Clock.currentTimeMillis
       const connection = yield* ctx.integration.connection.active("opencode")
       if (!connection) {
         reported = undefined
@@ -226,7 +242,7 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
               config,
               connection,
               organization: organizationName(credential),
-              mcp: config?.mcp && { servers: config.mcp.servers, headers: credentialHeaders(credential) },
+              mcp: config?.mcp && { servers: config.mcp.servers, headers: ConsoleAccess.headers(credential) },
             })),
           )
         }),
@@ -302,6 +318,9 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
             model.headers = Provider.mergeHeaders(model.headers, config.headers)
             model.body = Provider.mergeOverlay(model.body, config.body)
             if (config.limit !== undefined) model.limit = { ...model.limit, ...config.limit }
+          })
+          // Variants are spelled for the final package, which the update above normalizes from `aisdk:*`.
+          providers.models.update(providerID, modelID, (model) => {
             // The Console's reasoning replaces the base variants; its variants still overlay them below.
             if (config.capabilities?.reasoning !== undefined)
               model.variants = [
@@ -348,7 +367,7 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
       if (!item) return
       const hasKey = Boolean(process.env.OPENCODE_API_KEY || snapshot.connection || item.provider.settings?.apiKey)
       providers.update(item.provider.id, (provider) => {
-        if (!hasKey) {
+        if (!hasKey && !disableFree) {
           provider.activation = "enabled"
           provider.settings = { ...provider.settings, apiKey: "public" }
         }
@@ -395,7 +414,7 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
             const metadata = credential.metadata
             const orgID = typeof metadata?.orgID === "string" ? metadata.orgID : undefined
             const token = credential.type === "oauth" ? credential.access : credential.key
-            const server = yield* normalizeServer(serverUrl(credential))
+            const server = yield* normalizeServer(ConsoleAccess.server(credential))
             const request = yield* HttpClientRequest.post(`${server}/api/websearch`).pipe(
               HttpClientRequest.acceptJson,
               HttpClientRequest.bearerToken(token),
@@ -451,17 +470,24 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
     })
     const refresh = () => loading.withPermit(load().pipe(Effect.andThen(apply)))
     // Annotated: `apply` re-registers the hooks that call `check`, which would otherwise make inference circular.
-    const check = (): Effect.Effect<void> =>
+    // With `maxAge`, a load that started within it is reused; checking inside the permit lets concurrent callers
+    // share the load that was in flight when they arrived.
+    const check = (maxAge = Duration.zero): Effect.Effect<void> =>
       loading.withPermit(
-        load().pipe(Effect.flatMap((next) => (Equal.equals(snapshot, next) ? Effect.void : apply(next)))),
+        Effect.gen(function* () {
+          if ((yield* Clock.currentTimeMillis) - checked < Duration.toMillis(maxAge)) return
+          const next = yield* load()
+          if (!Equal.equals(snapshot, next)) yield* apply(next)
+        }),
       )
 
     // Console inference rejects a missing SSO sign-in with a generic 401/403. Re-check the Console config, which
     // reports the reason, and replace the response with instructions when the connection needs the user.
+    // A client retrying rejected inference would otherwise send one config request per failed response.
     const explain = (event: SessionHttpResponse) =>
       Effect.gen(function* () {
         if (event.response.status !== 401 && event.response.status !== 403) return
-        yield* check()
+        yield* check(Duration.seconds(30))
         const status = reported
         if (!status) return
         void event.response.body?.cancel()
@@ -484,15 +510,23 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
       )
     })
     yield* guard(snapshot)
-    yield* bus.subscribe(Credential.Event.Switched).pipe(
-      Stream.filter((event) => event.data.integrationID === Integration.ID.make("opencode")),
-      Stream.runForEach(refresh),
-      Effect.forkScoped({ startImmediately: true }),
-    )
 
     // Console config can change independently of local credential activity, so re-fetch
     // periodically and only rebuild the catalog and search providers when the snapshot differs.
-    yield* Effect.sleep(Duration.minutes(1)).pipe(Effect.andThen(check()), Effect.forever, Effect.forkScoped)
+    // Only while connected: a signed-out location runs no timer and no credential lookups.
+    const polling = yield* FiberHandle.make<void, never>()
+    const poll = Effect.fnUntraced(function* () {
+      if (!snapshot.connection) return yield* FiberHandle.clear(polling)
+      yield* FiberHandle.run(polling, Effect.sleep(Duration.minutes(1)).pipe(Effect.andThen(check()), Effect.forever), {
+        onlyIfMissing: true,
+      })
+    })
+    yield* bus.subscribe(Credential.Event.Switched).pipe(
+      Stream.filter((event) => event.data.integrationID === Integration.ID.make("opencode")),
+      Stream.runForEach(() => refresh().pipe(Effect.andThen(poll()))),
+      Effect.forkScoped({ startImmediately: true }),
+    )
+    yield* poll()
   }),
 })
 
@@ -500,9 +534,9 @@ function fetchConfig(http: HttpClient.HttpClient, value: Credential.Key | Creden
   // Scoped so responses whose body is never read (404, errors) are released here instead of by a GC-time abort.
   return HttpClient.withScope(http)
     .execute(
-      HttpClientRequest.get(`${serverUrl(value)}/api/v2/config`).pipe(
+      HttpClientRequest.get(`${ConsoleAccess.server(value)}/api/v2/config`).pipe(
         HttpClientRequest.acceptJson,
-        HttpClientRequest.setHeaders(credentialHeaders(value)),
+        HttpClientRequest.setHeaders(ConsoleAccess.headers(value)),
       ),
     )
     .pipe(
@@ -518,7 +552,7 @@ function fetchConfig(http: HttpClient.HttpClient, value: Credential.Key | Creden
             if (Option.isSome(body))
               return yield* new SsoRequiredError({
                 organization: organizationName(value),
-                url: yield* ssoUrl(serverUrl(value), body.value.connectionId),
+                url: yield* ssoUrl(ConsoleAccess.server(value), body.value.connectionId),
               })
           }
           return yield* HttpClientResponse.filterStatusOk(response).pipe(
@@ -557,18 +591,6 @@ function connectionStatus(cause: unknown): IntegrationConnection.Status | undefi
 
 function organizationName(credential: Credential.Value) {
   return typeof credential.metadata?.orgName === "string" ? credential.metadata.orgName : undefined
-}
-
-function credentialHeaders(value: Credential.Key | Credential.OAuth): Record<string, string> {
-  const orgID = value.metadata?.orgID
-  return {
-    authorization: `Bearer ${value.type === "oauth" ? value.access : value.key}`,
-    ...(typeof orgID === "string" ? { "x-org-id": orgID } : {}),
-  }
-}
-
-function serverUrl(value: Credential.Value) {
-  return typeof value.metadata?.server === "string" ? value.metadata.server : defaultServer
 }
 
 function withoutCredentials<Value>(body: Readonly<Record<string, Value>> | undefined) {

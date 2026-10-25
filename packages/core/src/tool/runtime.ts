@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "@opencode/ai"
 import { emptyInputJsonSchema } from "@opencode/ai/tool"
+import { isRecord } from "@opencode/ai/utils/record"
 import { Tool } from "@opencode/schema/tool"
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec"
 import { Cache, Effect, JsonPointer, JsonSchema, Schema, SchemaIssue, SchemaRepresentation } from "effect"
@@ -153,16 +154,32 @@ const validateStandard = (
     }),
   )
 
+// Definitions are rebuilt on every step, but schemas are immutable, so convert each one once.
+const inputJsonSchemas = new WeakMap<object, JsonSchema.JsonSchema>()
+const outputJsonSchemas = new WeakMap<object, JsonSchema.JsonSchema>()
+
+const memoize = (
+  cache: WeakMap<object, JsonSchema.JsonSchema>,
+  schema: object,
+  build: () => JsonSchema.JsonSchema,
+): JsonSchema.JsonSchema => {
+  const cached = cache.get(schema)
+  if (cached) return cached
+  const built = build()
+  cache.set(schema, built)
+  return built
+}
+
 const inputJsonSchema = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema => {
   if (schema === undefined || schema === null) return {}
-  if (isStandardSchema(schema)) return standardJsonSchema(schema, "input")
+  if (isStandardSchema(schema)) return memoize(inputJsonSchemas, schema, () => standardJsonSchema(schema, "input"))
   if (!Schema.isSchema(schema)) return schema
-  return emptyInputJsonSchema(schema) ?? toJsonSchema(schema)
+  return memoize(inputJsonSchemas, schema, () => emptyInputJsonSchema(schema) ?? toJsonSchema(schema))
 }
 
 const outputJsonSchema = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema => {
-  if (isStandardSchema(schema)) return standardJsonSchema(schema, "output")
-  return Schema.isSchema(schema) ? toJsonSchema(schema) : schema
+  if (isStandardSchema(schema)) return memoize(outputJsonSchemas, schema, () => standardJsonSchema(schema, "output"))
+  return Schema.isSchema(schema) ? memoize(outputJsonSchemas, schema, () => toJsonSchema(schema)) : schema
 }
 
 const standardJsonSchema = (schema: StandardSchemaV1<any, any>, io: "input" | "output"): JsonSchema.JsonSchema => {
@@ -197,9 +214,6 @@ const flattenAllOf = (value: unknown): unknown => {
   const { allOf, ...rest } = schema
   return flattenAllOf({ ...Object.assign({}, ...allOf), ...rest })
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const canFlattenAllOf = (allOf: ReadonlyArray<Record<string, unknown>>, parent: Record<string, unknown>) => {
   const keys = new Set(Object.keys(parent).filter((key) => key !== "allOf"))
@@ -264,7 +278,7 @@ export const normalizeContent = (value: string | ReadonlyArray<Tool.Content> | u
   return [{ type: "text" as const, text: stringify(output) }]
 }
 
-const stringify = (value: unknown) => {
+export const stringify = (value: unknown) => {
   if (typeof value === "string") return value
   try {
     return JSON.stringify(value) ?? String(value)
