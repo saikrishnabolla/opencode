@@ -50,6 +50,8 @@ Restore `experiments.json` beside `connections.json`, also at mode `0600`, to re
 [{"server":"oracle","name":"Hackathons","directory":"/home/ubuntu/Documents/GitHub/hackathons","group":"Experiments"}]
 ```
 
+Closed projects are shared across browsers in `project-visibility.json` beside `connections.json`, at mode `0600`. Back up this file privately. Browsers refresh visibility every five seconds and on focus. Closing a project hides it without deleting files or chats.
+
 Defaults live in `script/opencode-desk-gateway.mjs`: Ask Nomi groups `asknomi`, `asknomi-api`, and `asknomi-landing` on Oracle. Oracle is the primary code and development host; the Mini handles Apple-specific simulator, build, and deployment work through the existing authorized connection. General and Beyond Visual also use Oracle; personal experiments use their catalogued host. Adding an experiment stores a folder reference, not a clone or file sync. Ensure those folders exist on the corresponding machine. The catalog may retain a folder whose repository has been removed.
 
 ## Services and HTTPS
@@ -89,7 +91,7 @@ Port 8444 is the separate CLIProxyAPI service; restore it using the personal rep
 ```sh
 node --test script/opencode-desk-gateway.test.mjs
 cd packages/app
-/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
+/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/runtime/server/managed-visibility.test.ts ./src/runtime/server/registry.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
 /home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run typecheck
 ```
 

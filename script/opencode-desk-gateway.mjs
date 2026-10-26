@@ -86,6 +86,54 @@ export async function createExperimentStore(path) {
   })
 }
 
+function visibilityEntry(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.closed !== 'boolean') throw projectError(400)
+  const { server, directory } = experiment({ ...input, name: 'project' })
+  return { server, directory }
+}
+
+function visibilityStore(initial = [], save = async () => {}) {
+  let entries = []
+  let queue = Promise.resolve()
+  for (const input of initial) {
+    const entry = visibilityEntry({ ...input, closed: true })
+    if (!entries.some(value => value.server === entry.server && value.directory === entry.directory)) entries.push(entry)
+  }
+  const read = () => ({ closed: entries })
+  return {
+    read,
+    set(input) {
+      const operation = queue.then(async () => {
+        const entry = visibilityEntry(input)
+        const matches = value => value.server === entry.server && value.directory === entry.directory
+        const found = entries.some(matches)
+        if (found === input.closed) return read()
+        const next = input.closed ? [...entries, entry] : entries.filter(value => !matches(value))
+        await save(next)
+        entries = next
+        return read()
+      })
+      queue = operation.catch(() => {})
+      return operation
+    },
+  }
+}
+
+export async function createProjectVisibilityStore(path) {
+  let entries = []
+  try { entries = JSON.parse(await readFile(path, 'utf8')) } catch (error) { if (error.code !== 'ENOENT') throw error }
+  if (!Array.isArray(entries)) throw new Error('Invalid project visibility state')
+  return visibilityStore(entries, async next => {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    const temporary = path + '.' + randomUUID() + '.tmp'
+    try {
+      const file = await open(temporary, 'wx', 0o600)
+      try { await file.writeFile(JSON.stringify(next) + '\n'); await file.sync() } finally { await file.close() }
+      await rename(temporary, path)
+    } finally { await rm(temporary, { force: true }) }
+  })
+}
+
 async function readProject(req) {
   if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) throw projectError(415)
   const chunks = []
@@ -98,7 +146,7 @@ async function readProject(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { throw projectError(400) }
 }
 
-export function createGateway(connections, web = 'http://127.0.0.1:49375', auth, projects = projectStore()) {
+export function createGateway(connections, web = 'http://127.0.0.1:49375', auth, projects = projectStore(), visibility = visibilityStore()) {
   const targets = Object.fromEntries(Object.keys(names).map(id => {
     const value = connections[id]
     if (!value?.password || !URL.canParse(value.url)) throw new Error(`Missing connection: ${id}`)
@@ -122,6 +170,8 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
     if (pathname === '/_desk/servers' && req.url.split('?')[0] === pathname && !upgrade && req.method === 'GET') return { metadata: true }
     if (pathname === '/_desk/projects' && req.url === pathname && !upgrade && req.method === 'GET') return { projects: true }
     if (pathname === '/_desk/projects/experiments' && req.url === pathname && !upgrade && req.method === 'POST') return { addExperiment: true }
+    if (pathname === '/_desk/projects/visibility' && req.url === pathname && !upgrade && req.method === 'GET') return { visibility: true }
+    if (pathname === '/_desk/projects/visibility' && req.url === pathname && !upgrade && req.method === 'POST') return { setVisibility: true }
     if (req.url.startsWith(prefix)) {
       const match = /^\/_desk\/server\/(oracle|studio|mini)(\/api(?:[/?].*)?)$/.exec(req.url)
       if (!match) return { status: 404 }
@@ -163,7 +213,7 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
     }
     if (auth && await auth.handle(req, res)) return
     if (auth && !auth.authenticated(req)) {
-      if (route.projects || route.addExperiment) return fail(401)
+      if (route.projects || route.addExperiment || route.visibility || route.setVisibility) return fail(401)
       return auth.challenge(req, res)
     }
     if (route.authRoute) {
@@ -173,6 +223,14 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
     if (route.metadata || route.projects) {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
       res.end(JSON.stringify(route.projects ? projects.catalog() : { servers: Object.entries(names).map(([id, name]) => ({ id, name })) }))
+      return
+    }
+    if (route.visibility || route.setVisibility) {
+      try {
+        const state = route.setVisibility ? await visibility.set(await readProject(req)) : visibility.read()
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+        res.end(JSON.stringify(state))
+      } catch (error) { fail(error.status || 500) }
       return
     }
     if (route.addExperiment) {
@@ -229,5 +287,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const config = JSON.parse(await readFile(process.env.DESK_CONNECTIONS_FILE, 'utf8'))
   const auth = process.env.DESK_AUTH_MODE === 'tailscale' ? undefined : await createDeskAuth(process.env.DESK_AUTH_FILE)
   const projects = await createExperimentStore(join(dirname(process.env.DESK_CONNECTIONS_FILE), 'experiments.json'))
-  createGateway(config, undefined, auth, projects).listen(49377, '127.0.0.1', () => console.log('Private OpenCode gateway ready'))
+  const visibility = await createProjectVisibilityStore(join(dirname(process.env.DESK_CONNECTIONS_FILE), 'project-visibility.json'))
+  createGateway(config, undefined, auth, projects, visibility).listen(49377, '127.0.0.1', () => console.log('Private OpenCode gateway ready'))
 }

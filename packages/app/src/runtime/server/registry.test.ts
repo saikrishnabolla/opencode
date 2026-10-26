@@ -101,3 +101,23 @@ test("project actions update schema-derived state and follow dynamic server scop
   expect(store.projects.local).toEqual([{ worktree: "/local", expanded: true }])
   expect(store.projects[props.server]).toEqual([{ worktree: "/remote", expanded: false }])
 })
+
+
+test("project visibility hooks track explicit open and close without syncing presentation changes", () => {
+  const [store, setStore] = createStore(Schema.decodeUnknownSync(serverSchema())({}))
+  const changes: { directory: string; closed: boolean }[] = []
+  const projects = createServerProjects({
+    store, setStore, scope: () => ServerScope.fromServerKey(ServerConnection.Key.make("https://desk.example/_desk/server/studio")),
+    visibility: (directory, closed) => changes.push({ directory, closed }),
+  })
+  projects.open("/hermes")
+  projects.collapse("/hermes")
+  projects.expand("/hermes")
+  projects.close("/hermes")
+  projects.open("/hermes")
+  expect(changes).toEqual([
+    { directory: "/hermes", closed: false },
+    { directory: "/hermes", closed: true },
+    { directory: "/hermes", closed: false },
+  ])
+})

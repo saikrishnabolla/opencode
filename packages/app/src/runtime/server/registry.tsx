@@ -1,8 +1,11 @@
 import { createSimpleContext } from "@opencode/ui/context"
-import { batch, createMemo } from "solid-js"
+import { batch, createEffect, createMemo, onCleanup } from "solid-js"
 import { type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { pathKey } from "@/workspaces/path-key"
+import { useLanguage } from "@/runtime/i18n/language"
+import { showToast } from "@/shell/notifications/toast"
+import { createProjectVisibilitySync, loadProjectVisibility, managedServerId, saveProjectVisibility } from "./managed-visibility"
 import { ServerScope } from "@/runtime/server/scope"
 import type { ServerEntry } from "@opencode/gui-extensions/sdk"
 import { ServerHttp, ServerHttpBase, ServerKey, serverState } from "./persistence"
@@ -40,6 +43,7 @@ export function createServerProjects(input: {
   scope: () => ServerScope
   store: Store<ServerState>
   setStore: SetStoreFunction<ServerState>
+  visibility?: (directory: string, closed: boolean) => void
 }) {
   const setStore = input.setStore
   const current = () => input.store.projects[input.scope()] ?? []
@@ -71,8 +75,12 @@ export function createServerProjects(input: {
         )
       }
 
-      if (current().some((project) => project.worktree === directory)) return
+      if (current().some((project) => project.worktree === directory)) {
+        if (closed.some((worktree) => pathKey(worktree) === key)) input.visibility?.(directory, false)
+        return
+      }
       setStore("projects", scope, [{ worktree: directory, expanded: true }, ...current()])
+      input.visibility?.(directory, false)
     },
     // User-initiated close: removes the project and records it in recently closed.
     // Internal, non-user removals (e.g. sandbox/worktree normalization) should use remove().
@@ -81,6 +89,7 @@ export function createServerProjects(input: {
       const key = pathKey(directory)
       const closed = [directory, ...currentClosed().filter((worktree) => pathKey(worktree) !== key)]
       setStore("recentlyClosed", input.scope(), closed)
+      input.visibility?.(directory, true)
     },
     expand(directory: string) {
       const index = current().findIndex((project) => project.worktree === directory)
@@ -262,13 +271,59 @@ export const { use: useServers, provider: ServersProvider } = createSimpleContex
     }
 
     const scope = (key: ServerConnection.Key) => ServerScope.fromServerKey(key, props.canonicalLocalServer)
+    const language = useLanguage()
+    const sharing = createProjectVisibilitySync({
+      load: () => loadProjectVisibility(window.location.origin),
+      save: (change) => saveProjectVisibility(window.location.origin, change),
+      publish: (closed) => batch(() => {
+        for (const server of allServers()) {
+          const id = managedServerId(window.location.origin, server.http.url)
+          if (!id) continue
+          const serverScope = scope(ServerConnection.key(server))
+          const paths = closed.filter((entry) => entry.server === id).map((entry) => entry.directory)
+          const projects = store.projects[serverScope] ?? []
+          const reopened = (store.recentlyClosed[serverScope] ?? []).filter((directory) =>
+            !paths.some((closed) => pathKey(closed) === pathKey(directory)) &&
+            !projects.some((project) => pathKey(project.worktree) === pathKey(directory)),
+          )
+          setStore("recentlyClosed", serverScope, paths)
+          setStore("projects", serverScope, [
+            ...reopened.map((worktree) => ({ worktree, expanded: true })),
+            ...projects.filter((project) => !paths.some((directory) => pathKey(directory) === pathKey(project.worktree))),
+          ])
+        }
+      }),
+      error: () => showToast({
+        variant: "error", title: language.t("project.visibility.syncError"),
+        description: language.t("project.visibility.syncRetry"),
+      }),
+    })
+    createEffect(() => {
+      if (!hydrated() || !allServers().some((server) => managedServerId(window.location.origin, server.http.url))) return
+      void sharing.refresh()
+      const timer = setInterval(() => void sharing.refresh(), 5_000)
+      const refresh = () => void sharing.refresh()
+      window.addEventListener("focus", refresh)
+      onCleanup(() => {
+        clearInterval(timer)
+        window.removeEventListener("focus", refresh)
+      })
+    })
+    onCleanup(() => sharing.dispose())
     const projectStores = new Map<ServerConnection.Key, ReturnType<typeof createServerProjects>>()
 
     const projectsForServer = (key: ServerConnection.Key) => {
       const existing = projectStores.get(key)
 
       if (existing) return existing
-      const next = createServerProjects({ scope: () => scope(key), store, setStore })
+      const next = createServerProjects({
+        scope: () => scope(key), store, setStore,
+        visibility: (directory, closed) => {
+          const connection = allServers().find((server) => ServerConnection.key(server) === key)
+          const server = connection && managedServerId(window.location.origin, connection.http.url)
+          if (server) void sharing.change({ server, directory, closed })
+        },
+      })
       projectStores.set(key, next)
 
       return next

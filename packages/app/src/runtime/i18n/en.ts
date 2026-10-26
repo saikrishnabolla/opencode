@@ -2,6 +2,8 @@ import { DESKTOP_NATIVE_ENGLISH } from "./desktop-native"
 
 export const dict = {
   ...DESKTOP_NATIVE_ENGLISH,
+  "project.visibility.syncError": "Project visibility did not sync",
+  "project.visibility.syncRetry": "Check the connection and try again.",
   "session.location.unavailable": "Session location unavailable",
   "session.location.description": "Choose another directory to continue this session.",
   "session.location.choose": "Choose directory",

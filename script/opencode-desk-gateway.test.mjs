@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDeskAuth } from './opencode-desk-auth.mjs'
-import { createGateway, createExperimentStore } from './opencode-desk-gateway.mjs'
+import { createGateway, createExperimentStore, createProjectVisibilityStore } from './opencode-desk-gateway.mjs'
 
 const upstream = http.createServer((req, res) => {
   if (req.url === '/api/redirect') { res.writeHead(302, { Location: 'https://example.com' }); res.end(); return }
@@ -104,6 +104,59 @@ test('validates experiment writes and rejects cross-site or oversized requests b
  assert.equal((await call(endpoint,headers,'POST',JSON.stringify({server:'studio',directory:'/'+ 'a'.repeat(9000)}))).status,413)
  assert.equal(JSON.parse((await call('/_desk/projects')).body).projects.length,6)
 })
+test('shares closed project preferences across clients and preserves them after reload',async()=> {
+ const directory=await mkdtemp(join(tmpdir(),'desk-visibility-'))
+ const path=join(directory,'private','project-visibility.json')
+ const store=await createProjectVisibilityStore(path)
+ const visibilityGateway=createGateway(Object.fromEntries(['oracle','studio','mini'].map(id=>[id,{url,password:'test-only'}])),url,undefined,undefined,store)
+ visibilityGateway.listen(0,'127.0.0.1');await once(visibilityGateway,'listening')
+ const request=(headers={},method='GET',body)=>call('/_desk/projects/visibility',headers,method,body,visibilityGateway.address().port)
+ const write=input=>request({origin,'content-type':'application/json'},'POST',JSON.stringify(input))
+ try {
+  const input={server:'studio',directory:'/Users/test/hermes/',closed:true}
+  assert.deepEqual(JSON.parse((await request()).body),{closed:[]})
+  assert.equal((await write(input)).status,200)
+  const expected={closed:[{server:'studio',directory:'/Users/test/hermes'}]}
+  assert.deepEqual(JSON.parse((await request()).body),expected)
+  assert.deepEqual(JSON.parse((await write(input)).body),expected)
+  assert.deepEqual((await createProjectVisibilityStore(path)).read(),expected)
+  assert.equal((await stat(path)).mode & 0o777,0o600)
+  assert.equal((await stat(join(directory,'private'))).mode & 0o777,0o700)
+  const response=await request();assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.body.includes('test-only'),false)
+  await Promise.all(['One','Two'].map(name=>write({server:'oracle',directory:'/work/'+name,closed:true})))
+  assert.equal(store.read().closed.length,3)
+  await write({...input,closed:false})
+  assert.deepEqual(store.read().closed.map(value=>value.directory),['/work/One','/work/Two'])
+  assert.deepEqual((await createProjectVisibilityStore(path)).read(),store.read())
+  const pendingClose=write({...input,closed:true});await pendingClose
+  await write({...input,closed:false})
+  assert.equal(store.read().closed.some(value=>value.server==='studio'),false)
+ } finally {visibilityGateway.closeAllConnections();visibilityGateway.close();await rm(directory,{recursive:true,force:true})}
+})
+test('validates shared visibility updates and rejects cross-site changes',async()=> {
+ const endpoint='/_desk/projects/visibility'
+ const headers={origin,'content-type':'application/json'}
+ for(const input of [null,[],{}, {server:'unknown',directory:'/work',closed:true}, {server:'__proto__',directory:'/work',closed:true}, {server:'studio',directory:'relative',closed:true}, {server:'studio',directory:'/',closed:true}, {server:'studio',directory:'/work',closed:'true'}, {server:'studio',directory:'/work'}, {server:'studio',directory:'/work/\u0000bad',closed:true}]) {
+  assert.equal((await call(endpoint,headers,'POST',JSON.stringify(input))).status,400)
+ }
+ const body=JSON.stringify({server:'studio',directory:'/work/Hermes',closed:true})
+ for(const requestHeaders of [{...headers,origin:'https://evil.test'}, {'content-type':'application/json'}, {...headers,'sec-fetch-site':'cross-site'}]) {
+  assert.equal((await call(endpoint,requestHeaders,'POST',body)).status,403)
+ }
+ assert.equal((await call(endpoint,{...headers,host:'evil.test'},'POST',body)).status,404)
+ assert.equal((await call(endpoint,{origin,'content-type':'text/plain'},'POST',body)).status,415)
+ assert.equal((await call(endpoint,headers,'POST','{')).status,400)
+ assert.equal((await call(endpoint,headers,'POST',JSON.stringify({server:'studio',directory:'/'+ 'a'.repeat(9000),closed:true}))).status,413)
+ assert.deepEqual(JSON.parse((await call(endpoint)).body),{closed:[]})
+})
+test('rejects malformed saved visibility before serving it',async()=> {
+ const directory=await mkdtemp(join(tmpdir(),'desk-visibility-invalid-'))
+ const path=join(directory,'project-visibility.json')
+ try {
+  await writeFile(path,JSON.stringify({closed:[]}));await assert.rejects(createProjectVisibilityStore(path))
+  await writeFile(path,JSON.stringify([{server:'unknown',directory:'/work'}]));await assert.rejects(createProjectVisibilityStore(path))
+ } finally {await rm(directory,{recursive:true,force:true})}
+})
 test('injects server auth and strips caller credentials, cookies and forwarded headers',async()=> {
  const res=await call('/_desk/server/mini/api/info',{origin,authorization:'Basic attacker',cookie:'secret',forwarded:'x','x-forwarded-host':'evil'})
  assert.equal(res.status,200)
@@ -148,6 +201,8 @@ test('requires one website sign-in before exposing any server, and remembers it 
  try {
   assert.equal((await request('/_desk/servers')).status,401)
   assert.equal((await request('/_desk/server/mini/api/info')).status,401)
+  assert.equal((await request('/_desk/projects/visibility')).status,401)
+  assert.equal((await request('/_desk/projects/visibility',{origin,'content-type':'application/json'},'POST',JSON.stringify({server:'studio',directory:'/work/Hermes',closed:true}))).status,401)
   assert.equal((await request('/_desk/projects/experiments',{origin,'content-type':'application/json'},'POST',JSON.stringify({server:'oracle',directory:'/work/test'}))).status,401)
   assert.match((await request('/')).body,/Sign in to Desk/)
   const form={origin,'content-type':'application/x-www-form-urlencoded'}
