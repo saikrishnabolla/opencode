@@ -27,12 +27,14 @@ export function catalogProjectForDirectory(catalog: Catalog, directory: string):
 }
 
 export function sidebarProjects(catalog: Catalog, projects: LocalProject[], closed: string[]): LocalProject[] {
-  const defaults = catalog?.projects.map((project) => ({ worktree: project.directory, name: project.name, expanded: true })) ?? []
+  const isClosed = (directory: string) => closed.some((value) => pathKey(value) === pathKey(directory))
+  const defaults = catalog?.projects.filter((project) => !isClosed(project.directory))
+    .map((project) => ({ worktree: project.directory, name: project.name, expanded: true })) ?? []
   const ordinary = projects.filter((project) =>
     project.worktree &&
     !catalog?.excluded.some((excluded) => pathKey(excluded.directory) === pathKey(project.worktree)) &&
     !catalogProjectForDirectory(catalog, project.worktree) &&
-    !closed.some((directory) => pathKey(directory) === pathKey(project.worktree)),
+    !isClosed(project.worktree),
   )
   return [...new Map([...ordinary, ...defaults].map((project) => [pathKey(project.worktree), project])).values()]
 }

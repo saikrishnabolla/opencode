@@ -9,7 +9,7 @@ const catalog = {
 }
 const scoped = sidebarCatalog(catalog, "https://desk.example/_desk/server/mini", "https://desk.example")
 
-test("shared defaults survive browser closure while exclusions and unrelated projects keep their meaning", () => {
+test("closing a shared project hides it while exclusions and unrelated projects keep their meaning", () => {
   expect(sidebarProjects(scoped, [
     { worktree: "/home", expanded: true },
     { worktree: "/workspace/api", expanded: true },
@@ -17,6 +17,15 @@ test("shared defaults survive browser closure while exclusions and unrelated pro
     { worktree: "/closed", expanded: true },
   ], ["/workspace", "/closed"])).toEqual([
     { worktree: "/other", expanded: true },
+  ])
+})
+
+test("closed catalog projects stay hidden after refresh and return when reopened", () => {
+  const closed = ["/workspace/"]
+  const project = { worktree: "/workspace", expanded: true }
+  expect(sidebarProjects(scoped, [project], closed)).toEqual([])
+  expect(sidebarProjects(sidebarCatalog(structuredClone(catalog), "https://desk.example/_desk/server/mini", "https://desk.example"), [project], closed)).toEqual([])
+  expect(sidebarProjects(scoped, [project], [])).toEqual([
     { worktree: "/workspace", name: "AskNomi", expanded: true },
   ])
 })
