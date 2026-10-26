@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenCode private coding server
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/ubuntu/.local/bin/opencode serve --service
+WorkingDirectory=/home/ubuntu
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+MemoryHigh=infinity
+MemoryMax=infinity
+TasksMax=256
+Nice=5
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=default.target

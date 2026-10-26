@@ -1,0 +1,16 @@
+[Unit]
+Description=Private OpenCode central connections
+After=network-online.target opencode.service opencode-web-preview.service
+
+[Service]
+ExecStart=/usr/bin/node /home/ubuntu/Documents/GitHub/opencode-web/script/opencode-desk-gateway.mjs
+Environment=DESK_CONNECTIONS_FILE=/home/ubuntu/.config/opencode-desk/connections.json
+Environment=DESK_AUTH_MODE=tailscale
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

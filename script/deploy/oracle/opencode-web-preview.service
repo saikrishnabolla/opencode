@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenCode project sidebar web preview
+After=network.target
+[Service]
+WorkingDirectory=/home/ubuntu/Documents/GitHub/opencode-web/packages/app
+ExecStart=/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run serve
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=default.target
