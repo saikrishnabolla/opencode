@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/solid-query"
+import { onCleanup } from "solid-js"
 import { Option, Schema } from "effect"
 import type { ServerConnection } from "./registry"
 
@@ -50,17 +52,45 @@ export async function loadManagedProjects(origin: string): Promise<ManagedProjec
   return Option.getOrUndefined(Schema.decodeUnknownOption(ManagedProjects)(await response.json().catch(() => undefined)))
 }
 
-export async function addManagedExperiment(origin: string, serverUrl: string, directory: string): Promise<void> {
+export function managedServerId(origin: string, serverUrl: string) {
   const url = new URL(serverUrl)
-  const match = url.origin === origin && /^\/_desk\/server\/(oracle|studio|mini)\/?$/.exec(url.pathname)
-  if (!match) throw new Error("Choose a connected Desk server.")
-  const response = await fetch(new URL("/_desk/projects/experiments", origin), {
-    method: "POST",
+  if (url.origin !== origin) return
+  return /^\/_desk\/server\/(oracle|studio|mini)\/?$/.exec(url.pathname)?.[1]
+}
+
+export const MANAGED_PROJECTS_CHANGED = "desk-projects-changed"
+
+export async function changeManagedProject(origin: string, serverUrl: string, directory: string, method: "POST" | "DELETE") {
+  const server = managedServerId(origin, serverUrl)
+  if (!server) throw new Error("Choose a connected Desk server.")
+  const response = await fetch(new URL("/_desk/projects", origin), {
+    method,
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ server: match[1], directory }),
+    body: JSON.stringify({ server, directory }),
     signal: AbortSignal.timeout(10_000),
   })
-  if (response.status === 409) throw new Error("This folder already belongs to another project.")
-  if (!response.ok) throw new Error("Could not add the folder. Try again.")
+  if (!response.ok) throw new Error("Could not update the project list. Try again.")
+  window.dispatchEvent(new Event(MANAGED_PROJECTS_CHANGED))
+}
+
+export function useManagedProjects(enabled: () => boolean) {
+  const query = useQuery(() => ({
+    queryKey: ["desk-projects", window.location.origin],
+    enabled: enabled(),
+    queryFn: async () => {
+      const catalog = await loadManagedProjects(window.location.origin)
+      if (!catalog) throw new Error("Could not load the project list.")
+      return catalog
+    },
+    select: (catalog: ManagedProjectCatalog) => () => catalog,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+    retry: false,
+  }))
+  const refresh = () => { if (enabled()) void query.refetch() }
+  window.addEventListener(MANAGED_PROJECTS_CHANGED, refresh)
+  onCleanup(() => window.removeEventListener(MANAGED_PROJECTS_CHANGED, refresh))
+  return query
 }

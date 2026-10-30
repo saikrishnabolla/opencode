@@ -6,9 +6,11 @@ import { mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDeskAuth } from './opencode-desk-auth.mjs'
-import { createGateway, createExperimentStore, createProjectVisibilityStore } from './opencode-desk-gateway.mjs'
+import { createGateway, createProjectStore } from './opencode-desk-gateway.mjs'
 
+let upstreamRequests = 0
 const upstream = http.createServer((req, res) => {
+  upstreamRequests++
   if (req.url === '/api/redirect') { res.writeHead(302, { Location: 'https://example.com' }); res.end(); return }
   if (req.url === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.flushHeaders()
@@ -31,7 +33,7 @@ const sockets = new Set()
 for (const server of [upstream,gateway]) server.on('connection',socket=> {sockets.add(socket);socket.on('close',()=>sockets.delete(socket))})
 const origin = 'https://desk.saibolla.com'
 const call = (path, headers={}, method='GET', body, targetPort=port) => new Promise((resolve,reject)=> {
- const req=http.request({host:'127.0.0.1',port:targetPort,path,method,headers:{host:'desk.saibolla.com',...headers}},res=> {
+ const req=http.request({host:'127.0.0.1',port:targetPort,path,method,headers:{host:'desk.saibolla.com',...(body === undefined ? {} : {'content-length':Buffer.byteLength(body)}),...headers}},res=> {
   let body='';res.on('data',chunk=>body+=chunk);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body}))
  });req.on('error',reject);req.end(body)
 })
@@ -41,18 +43,9 @@ test('metadata contains only fixed server identities, never credentials',async()
  assert.deepEqual(JSON.parse(res.body).servers.map(s=>s.id),['oracle','studio','mini'])
  assert.equal(res.body.includes('test-only'),false);assert.equal(res.headers['cache-control'],'no-store')
 })
-test('shares default projects and experiment repositories without backend credentials',async()=> {
+test('starts with no default projects or machine-specific exclusions',async()=> {
  const res=await call('/_desk/projects');assert.equal(res.status,200)
- const catalog=JSON.parse(res.body)
- assert.deepEqual(catalog.projects.map(p=>[p.name,p.server]),[['Ask Nomi','oracle'],['Beyond Visual','oracle'],['General','oracle'],['Cue','studio'],['Hermes','studio'],['OpenCode','oracle']])
- assert.deepEqual(catalog.projects.filter(p=>p.group==='Experiments').map(p=>[p.name,p.server,p.directory]), [
-  ['Cue','studio','/Users/saikrishnabolla/Documents/GitHub/cue'],
-  ['Hermes','studio','/Users/saikrishnabolla/Documents/GitHub/hermes'],
-  ['OpenCode','oracle','/home/ubuntu/Documents/GitHub/opencode-web'],
- ])
- assert.deepEqual(catalog.projects[0].members,['asknomi','asknomi-api','asknomi-landing'].map(name=>'/home/ubuntu/Documents/GitHub/'+name))
- assert.equal(catalog.excluded.length,4)
- assert.equal(res.body.includes('test-only'),false)
+ assert.deepEqual(JSON.parse(res.body),{projects:[],excluded:[]})
  assert.equal(res.headers['cache-control'],'no-store')
 })
 test('retires the offline worker without causing a page reload loop',async()=> {
@@ -61,100 +54,89 @@ test('retires the offline worker without causing a page reload loop',async()=> {
  assert.doesNotMatch(res.body,/client.navigate|clients.matchAll/)
  assert.equal(res.headers['cache-control'],'no-store')
 })
-test('adds shared experiments persistently, keeps additions idempotent and serializes concurrent saves',async()=> {
+test('shares one persistent project list and removes entries without touching backends',async()=> {
  const directory=await mkdtemp(join(tmpdir(),'desk-projects-'))
- const path=join(directory,'private','experiments.json')
- const store=await createExperimentStore(path)
+ const path=join(directory,'private','projects.json')
+ const store=await createProjectStore(path)
  const projectGateway=createGateway(Object.fromEntries(['oracle','studio','mini'].map(id=>[id,{url,password:'test-only'}])),url,undefined,store)
  projectGateway.listen(0,'127.0.0.1');await once(projectGateway,'listening')
- const request=(path,headers={},method='GET',body)=>call(path,headers,method,body,projectGateway.address().port)
- const add=(input,headers={origin,'content-type':'application/json'})=>request('/_desk/projects/experiments',headers,'POST',JSON.stringify(input))
+ const request=(method='GET',input)=>call('/_desk/projects',{origin,'content-type':'application/json'},method,input===undefined ? undefined : JSON.stringify(input),projectGateway.address().port)
  try {
+  const before=upstreamRequests
+  const sample={server:'oracle',directory:'/projects/sample',name:'Sample',members:['/projects/sample-api']}
+  await request('POST',sample)
+  const original=JSON.parse((await request()).body)
   const input={server:'studio',directory:'/Users/test/hackathons/',name:'Hackathons'}
-  const first=await add(input);assert.equal(first.status,200)
-  assert.deepEqual(JSON.parse(first.body),{server:'studio',directory:'/Users/test/hackathons',name:'Hackathons',group:'Experiments'})
-  assert.equal((await add(input)).status,200)
-  const concurrent=await Promise.all(['One','Two'].map(name=>add({server:'oracle',directory:'/work/'+name})))
+  const first=await request('POST',input);assert.equal(first.status,200)
+  assert.deepEqual(JSON.parse(first.body).projects.at(-1),{server:'studio',directory:'/Users/test/hackathons',name:'Hackathons'})
+  assert.equal((await request('POST',input)).status,200)
+  const concurrent=await Promise.all(['One','Two'].map(name=>request('POST',{server:'oracle',directory:'/work/'+name})))
   assert.deepEqual(concurrent.map(result=>result.status),[200,200])
-  const catalog=JSON.parse((await request('/_desk/projects')).body)
-  assert.equal(catalog.projects.length,9)
+  const catalog=JSON.parse((await request()).body)
+  assert.equal(catalog.projects.length,4)
   assert.equal(catalog.projects.filter(project=>project.name==='Hackathons').length,1)
-  const reloaded=await createExperimentStore(path)
-  assert.deepEqual(reloaded.catalog(),catalog)
-  assert.equal((await stat(path)).mode & 0o777,0o600)
-  assert.equal((await add({server:'oracle',directory:'/home/ubuntu/Documents/GitHub/personal'})).status,409)
-  assert.equal((await add({server:'oracle',directory:'/home/ubuntu/Documents/GitHub/asknomi'})).status,409)
-  assert.equal((await add({server:'studio',directory:'/Users/saikrishnabolla/Documents/GitHub/cue'})).status,200)
-  assert.equal((await reloaded.add({server:'oracle',directory:'/work/After reload'})).name,'After reload')
- } finally {projectGateway.closeAllConnections();projectGateway.close();await rm(directory,{recursive:true,force:true})}
-})
-test('validates experiment writes and rejects cross-site or oversized requests before changing the catalog',async()=> {
- const endpoint='/_desk/projects/experiments'
- const headers={origin,'content-type':'application/json'}
- for(const input of [null,[],{}, {server:'unknown',directory:'/work/hack'}, {server:'__proto__',directory:'/work/hack'}, {server:'studio',directory:'relative'}, {server:'studio',directory:'/'}, {server:'studio',directory:'/foo/..'}, {server:'studio',directory:'/work/\u0000bad'}, {server:'studio',directory:'/work/\nbad'}, {server:'studio',directory:'/work/\\bad'}]) {
-  assert.equal((await call(endpoint,headers,'POST',JSON.stringify(input))).status,400)
- }
- const body=JSON.stringify({server:'studio',directory:'/work/Hackathon'})
- for(const requestHeaders of [{...headers,origin:'https://evil.test'}, {'content-type':'application/json'}, {...headers,'sec-fetch-site':'cross-site'}]) {
-  assert.equal((await call(endpoint,requestHeaders,'POST',body)).status,403)
- }
- assert.equal((await call(endpoint,{...headers,host:'evil.test'},'POST',body)).status,404)
- assert.equal((await call(endpoint,{origin,'content-type':'text/plain'},'POST',body)).status,415)
- assert.equal((await call(endpoint,headers,'POST','{')).status,400)
- assert.equal((await call(endpoint,headers,'POST',JSON.stringify({server:'studio',directory:'/'+ 'a'.repeat(9000)}))).status,413)
- assert.equal(JSON.parse((await call('/_desk/projects')).body).projects.length,6)
-})
-test('shares closed project preferences across clients and preserves them after reload',async()=> {
- const directory=await mkdtemp(join(tmpdir(),'desk-visibility-'))
- const path=join(directory,'private','project-visibility.json')
- const store=await createProjectVisibilityStore(path)
- const visibilityGateway=createGateway(Object.fromEntries(['oracle','studio','mini'].map(id=>[id,{url,password:'test-only'}])),url,undefined,undefined,store)
- visibilityGateway.listen(0,'127.0.0.1');await once(visibilityGateway,'listening')
- const request=(headers={},method='GET',body)=>call('/_desk/projects/visibility',headers,method,body,visibilityGateway.address().port)
- const write=input=>request({origin,'content-type':'application/json'},'POST',JSON.stringify(input))
- try {
-  const input={server:'studio',directory:'/Users/test/hermes/',closed:true}
-  assert.deepEqual(JSON.parse((await request()).body),{closed:[]})
-  assert.equal((await write(input)).status,200)
-  const expected={closed:[{server:'studio',directory:'/Users/test/hermes'}]}
-  assert.deepEqual(JSON.parse((await request()).body),expected)
-  assert.deepEqual(JSON.parse((await write(input)).body),expected)
-  assert.deepEqual((await createProjectVisibilityStore(path)).read(),expected)
+  assert.deepEqual((await createProjectStore(path)).catalog(),catalog)
+  const savedProject=original.projects[0]
+  assert.equal((await request('DELETE',{server:savedProject.server,directory:savedProject.directory+'/'})).status,200)
+  assert.equal((await request('DELETE',savedProject)).status,200)
+  await request('DELETE',input)
+  const removed=JSON.parse((await request()).body)
+  assert.equal(removed.projects.some(project=>project.directory===savedProject.directory || project.name==='Hackathons'),false)
+  assert.deepEqual((await createProjectStore(path)).catalog(),removed)
+  assert.deepEqual(JSON.parse((await request('POST',savedProject)).body).projects.at(-1),savedProject)
+  assert.equal((await request('DELETE',{server:savedProject.server,directory:savedProject.members[0]})).status,200)
+  assert.equal(JSON.parse((await request()).body).projects.some(project=>project.directory===savedProject.directory),false)
+  assert.equal(upstreamRequests,before)
   assert.equal((await stat(path)).mode & 0o777,0o600)
   assert.equal((await stat(join(directory,'private'))).mode & 0o777,0o700)
   const response=await request();assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.body.includes('test-only'),false)
-  await Promise.all(['One','Two'].map(name=>write({server:'oracle',directory:'/work/'+name,closed:true})))
-  assert.equal(store.read().closed.length,3)
-  await write({...input,closed:false})
-  assert.deepEqual(store.read().closed.map(value=>value.directory),['/work/One','/work/Two'])
-  assert.deepEqual((await createProjectVisibilityStore(path)).read(),store.read())
-  const pendingClose=write({...input,closed:true});await pendingClose
-  await write({...input,closed:false})
-  assert.equal(store.read().closed.some(value=>value.server==='studio'),false)
- } finally {visibilityGateway.closeAllConnections();visibilityGateway.close();await rm(directory,{recursive:true,force:true})}
+ } finally {projectGateway.closeAllConnections();projectGateway.close();await rm(directory,{recursive:true,force:true})}
 })
-test('validates shared visibility updates and rejects cross-site changes',async()=> {
- const endpoint='/_desk/projects/visibility'
- const headers={origin,'content-type':'application/json'}
- for(const input of [null,[],{}, {server:'unknown',directory:'/work',closed:true}, {server:'__proto__',directory:'/work',closed:true}, {server:'studio',directory:'relative',closed:true}, {server:'studio',directory:'/',closed:true}, {server:'studio',directory:'/work',closed:'true'}, {server:'studio',directory:'/work'}, {server:'studio',directory:'/work/\u0000bad',closed:true}]) {
-  assert.equal((await call(endpoint,headers,'POST',JSON.stringify(input))).status,400)
- }
- const body=JSON.stringify({server:'studio',directory:'/work/Hermes',closed:true})
- for(const requestHeaders of [{...headers,origin:'https://evil.test'}, {'content-type':'application/json'}, {...headers,'sec-fetch-site':'cross-site'}]) {
-  assert.equal((await call(endpoint,requestHeaders,'POST',body)).status,403)
- }
- assert.equal((await call(endpoint,{...headers,host:'evil.test'},'POST',body)).status,404)
- assert.equal((await call(endpoint,{origin,'content-type':'text/plain'},'POST',body)).status,415)
- assert.equal((await call(endpoint,headers,'POST','{')).status,400)
- assert.equal((await call(endpoint,headers,'POST',JSON.stringify({server:'studio',directory:'/'+ 'a'.repeat(9000),closed:true}))).status,413)
- assert.deepEqual(JSON.parse((await call(endpoint)).body),{closed:[]})
-})
-test('rejects malformed saved visibility before serving it',async()=> {
- const directory=await mkdtemp(join(tmpdir(),'desk-visibility-invalid-'))
- const path=join(directory,'project-visibility.json')
+test('loads only explicitly saved projects and never seeds or restores legacy defaults',async()=> {
+ const directory=await mkdtemp(join(tmpdir(),'desk-project-list-'))
+ const path=join(directory,'projects.json')
+ const project={server:'oracle',directory:'/work/project',name:'My project'}
+ const legacy=JSON.stringify([project])
+ const visibility='[]'
  try {
-  await writeFile(path,JSON.stringify({closed:[]}));await assert.rejects(createProjectVisibilityStore(path))
-  await writeFile(path,JSON.stringify([{server:'unknown',directory:'/work'}]));await assert.rejects(createProjectVisibilityStore(path))
+  await writeFile(join(directory,'experiments.json'),legacy)
+  await writeFile(join(directory,'project-visibility.json'),visibility)
+  const store=await createProjectStore(path)
+  assert.deepEqual(store.catalog(),{projects:[],excluded:[]})
+  await store.add(project)
+  assert.deepEqual((await createProjectStore(path)).catalog().projects,[project])
+  await store.remove(project)
+  assert.deepEqual((await createProjectStore(path)).catalog().projects,[])
+  assert.equal(await readFile(join(directory,'experiments.json'),'utf8'),legacy)
+  assert.equal(await readFile(join(directory,'project-visibility.json'),'utf8'),visibility)
+ } finally {await rm(directory,{recursive:true,force:true})}
+})
+test('validates project writes and rejects cross-site or oversized requests before changing the list',async()=> {
+ const endpoint='/_desk/projects'
+ const headers={origin,'content-type':'application/json'}
+ for(const method of ['POST','DELETE']) {
+  for(const input of [null,[],{}, {server:'unknown',directory:'/work/hack'}, {server:'__proto__',directory:'/work/hack'}, {server:'studio',directory:'relative'}, {server:'studio',directory:'/'}, {server:'studio',directory:'/foo/..'}, {server:'studio',directory:'/work/\u0000bad'}, {server:'studio',directory:'/work/\nbad'}, {server:'studio',directory:'/work/\\bad'}, {server:'studio',directory:'/work',group:3}, {server:'studio',directory:'/work',members:[{}]}]) {
+   assert.equal((await call(endpoint,headers,method,JSON.stringify(input))).status,400)
+  }
+  const body=JSON.stringify({server:'studio',directory:'/work/Hackathon'})
+  for(const requestHeaders of [{...headers,origin:'https://evil.test'}, {'content-type':'application/json'}, {...headers,'sec-fetch-site':'cross-site'}]) {
+   assert.equal((await call(endpoint,requestHeaders,method,body)).status,403)
+  }
+  assert.equal((await call(endpoint,{...headers,host:'evil.test'},method,body)).status,404)
+  assert.equal((await call(endpoint,{origin,'content-type':'text/plain'},method,body)).status,415)
+  assert.equal((await call(endpoint,headers,method,'{')).status,400)
+  assert.equal((await call(endpoint,headers,method,JSON.stringify({server:'studio',directory:'/'+ 'a'.repeat(9000)}))).status,413)
+ }
+ assert.equal(JSON.parse((await call(endpoint)).body).projects.length,0)
+ assert.equal((await call('/_desk/projects/visibility')).status,404)
+ assert.equal((await call('/_desk/projects/experiments',headers,'POST','{}')).status,404)
+})
+test('rejects malformed saved project lists before serving them',async()=> {
+ const directory=await mkdtemp(join(tmpdir(),'desk-projects-invalid-'))
+ const path=join(directory,'projects.json')
+ try {
+  await writeFile(path,JSON.stringify({projects:[]}));await assert.rejects(createProjectStore(path))
+  await writeFile(path,JSON.stringify([{server:'unknown',directory:'/work'}]));await assert.rejects(createProjectStore(path))
  } finally {await rm(directory,{recursive:true,force:true})}
 })
 test('injects server auth and strips caller credentials, cookies and forwarded headers',async()=> {
@@ -201,9 +183,8 @@ test('requires one website sign-in before exposing any server, and remembers it 
  try {
   assert.equal((await request('/_desk/servers')).status,401)
   assert.equal((await request('/_desk/server/mini/api/info')).status,401)
-  assert.equal((await request('/_desk/projects/visibility')).status,401)
-  assert.equal((await request('/_desk/projects/visibility',{origin,'content-type':'application/json'},'POST',JSON.stringify({server:'studio',directory:'/work/Hermes',closed:true}))).status,401)
-  assert.equal((await request('/_desk/projects/experiments',{origin,'content-type':'application/json'},'POST',JSON.stringify({server:'oracle',directory:'/work/test'}))).status,401)
+  assert.equal((await request('/_desk/projects')).status,401)
+  for (const method of ['POST','DELETE']) assert.equal((await request('/_desk/projects',{origin,'content-type':'application/json'},method,JSON.stringify({server:'oracle',directory:'/work/test'}))).status,401)
   assert.match((await request('/')).body,/Sign in to Desk/)
   const form={origin,'content-type':'application/x-www-form-urlencoded'}
   assert.equal((await request('/_desk/setup/test-setup-code',form,'POST','password=too-short&confirm=too-short')).status,401)

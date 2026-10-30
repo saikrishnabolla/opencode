@@ -1,3 +1,4 @@
+import { changeManagedProject, managedServerId } from "@/runtime/server/managed"
 import { useDirectoryPicker } from "@/workspaces/selection/picker"
 import { useServerActionsController } from "@/servers/registry/controller"
 import { useSettingsCommand } from "@/settings/command"
@@ -165,6 +166,16 @@ export function createHomeProjectsController(home: HomeController) {
         choose(conn)
       },
       close: (conn: ServerConnection.Any, directory: string) => {
+        if (managedServerId(window.location.origin, conn.http.url)) {
+          void changeManagedProject(window.location.origin, conn.http.url, directory, "DELETE")
+            .then(() => {
+              home.server.context(conn).projects.remove(directory)
+              if (home.selection.value().server === ServerConnection.key(conn) && home.selection.value().directory === directory)
+                home.selection.set({ server: ServerConnection.key(conn) })
+            })
+            .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
+          return
+        }
         const next = closeHomeProject(
           home.selection.value(),
           ServerConnection.key(conn),

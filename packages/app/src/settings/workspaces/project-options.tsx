@@ -1,3 +1,5 @@
+import { changeManagedProject, managedServerId } from "@/runtime/server/managed"
+import { showToast } from "@/shell/notifications/toast"
 import { Show, type Component } from "solid-js"
 import { Icon } from "@opencode/ui/icon"
 import { IconButton } from "@opencode/ui/icon-button"
@@ -37,6 +39,12 @@ export const ProjectOptions: Component<{
   }
 
   const close = () => {
+    if (managedServerId(window.location.origin, props.server.http.url)) {
+      void changeManagedProject(window.location.origin, props.server.http.url, props.project.worktree, "DELETE")
+        .then(() => { context().projects.remove(props.project.worktree); props.onClose?.() })
+        .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
+      return
+    }
     context().projects.close(props.project.worktree)
     props.onClose?.()
   }
@@ -72,7 +80,7 @@ export const ProjectOptions: Component<{
             {language.t("sidebar.project.clearNotifications")}
           </Menu.Item>
           <Menu.Separator />
-          <Menu.Item onSelect={close}>{language.t("common.close")}</Menu.Item>
+          <Menu.Item onSelect={close}>{language.t(managedServerId(window.location.origin, props.server.http.url) ? "sidebar.projects.removeAction" : "common.close")}</Menu.Item>
         </Menu.Content>
       </Menu.Portal>
     </Menu>

@@ -14,7 +14,6 @@
 .project-sidebar-project { display:flex; align-items:center; min-height:36px; }
 .project-sidebar-project-toggle { display:flex; align-items:center; gap:7px; min-width:0; flex:1; padding:8px 5px; border-radius:6px; }
 .project-sidebar-folder { flex:none; display:flex; opacity:.7; }
-.project-sidebar-project-icon { flex:none; width:16px; height:16px; object-fit:contain; }
 .project-sidebar-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
 .project-sidebar-server { color:var(--text-weak); max-width:86px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
 .project-sidebar-health { height:5px; width:5px; flex:none; background:#5f9e75; border-radius:50%; }
@@ -30,10 +29,3 @@
 .project-sidebar-footer { flex:none; font-size:12px; color:var(--text-weak); }
 .project-sidebar-mobile-toggle { text-align:start; padding:8px 16px; font-size:13px; }
 .project-sidebar-mobile { position:absolute!important; z-index:40; top:0; bottom:0; height:auto!important; left:0; width:min(320px,90vw)!important; box-shadow:8px 0 24px #0003; }
-
-.project-sidebar-repositories { margin-inline-start:14px; padding-inline-start:8px; border-inline-start:1px solid var(--border-weak-base); }
-.project-sidebar-repositories .project-sidebar-group { margin-bottom:4px; }
-
-.project-sidebar-draft { display:flex; align-items:center; }
-.project-sidebar-draft .project-sidebar-session { min-width:0; width:auto; flex:1; }
-.project-sidebar-draft-close { display:flex; align-items:center; justify-content:center; padding:4px; flex:none; color:var(--text-weak); border-radius:6px; }

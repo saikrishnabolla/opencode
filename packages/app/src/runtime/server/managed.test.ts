@@ -2,13 +2,13 @@ import { expect, test } from "bun:test"
 import { createServer } from "node:http"
 import { once } from "node:events"
 import type { AddressInfo } from "node:net"
-import { addManagedExperiment, loadManagedProjects, loadManagedServers } from "./managed"
+import { changeManagedProject, loadManagedProjects, loadManagedServers } from "./managed"
 
 async function fixture(body: string, status = 200, contentType = "application/json") {
   const server = createServer((req, res) => {
     res.setHeader("Access-Control-Allow-Origin", req.headers.origin ?? "http://localhost:3000")
     res.setHeader("Access-Control-Allow-Credentials", "true")
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
     res.setHeader("Access-Control-Allow-Headers", req.headers["access-control-request-headers"] ?? "")
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return }
     res.writeHead(status, { "Content-Type": contentType })
@@ -63,12 +63,12 @@ test("keeps the normal sidebar when the shared project endpoint is absent", asyn
 })
 
 
-test("adds an experiment to the selected managed server without browser credentials", async () => {
+test("adds and removes shared projects without browser credentials", async () => {
   const received: { path?: string; method?: string; body?: unknown; authorization?: string } = {}
   const server = createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", req.headers.origin ?? "http://localhost:3000")
     res.setHeader("Access-Control-Allow-Credentials", "true")
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
+    res.setHeader("Access-Control-Allow-Methods", "POST, DELETE, OPTIONS")
     res.setHeader("Access-Control-Allow-Headers", "content-type")
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return }
     received.path = req.url
@@ -82,14 +82,16 @@ test("adds an experiment to the selected managed server without browser credenti
   await once(server, "listening")
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   try {
-    await addManagedExperiment(origin, `${origin}/_desk/server/studio`, "/projects/hackathon")
-    expect(received).toEqual({ path: "/_desk/projects/experiments", method: "POST", body: { server: "studio", directory: "/projects/hackathon" }, authorization: undefined })
-    await expect(addManagedExperiment(origin, "https://other.example/_desk/server/studio", "/projects/hackathon")).rejects.toThrow("Choose a connected Desk server.")
+    for (const method of ["POST", "DELETE"] as const) {
+      await changeManagedProject(origin, `${origin}/_desk/server/studio`, "/projects/hackathon", method)
+      expect(received).toEqual({ path: "/_desk/projects", method, body: { server: "studio", directory: "/projects/hackathon" }, authorization: undefined })
+    }
+    await expect(changeManagedProject(origin, "https://other.example/_desk/server/studio", "/projects/hackathon", "DELETE")).rejects.toThrow("Choose a connected Desk server.")
   } finally { server.closeAllConnections(); server.close() }
 })
 
-test("keeps a catalog conflict visible instead of treating the folder as added", async () => {
-  const { server, origin } = await fixture("{}", 409)
-  try { await expect(addManagedExperiment(origin, `${origin}/_desk/server/oracle`, "/projects/existing")).rejects.toThrow("already belongs") }
+test("reports a failed shared-list update instead of treating it as saved", async () => {
+  const { server, origin } = await fixture("{}", 503)
+  try { await expect(changeManagedProject(origin, `${origin}/_desk/server/oracle`, "/projects/existing", "DELETE")).rejects.toThrow("Could not update") }
   finally { server.closeAllConnections(); server.close() }
 })

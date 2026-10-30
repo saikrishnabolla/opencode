@@ -9,27 +9,11 @@ import { createDeskAuth } from './opencode-desk-auth.mjs'
 const origin = 'https://desk.saibolla.com'
 const prefix = '/_desk/server/'
 const names = { oracle: 'Oracle', studio: 'Studio', mini: 'Mac Mini' }
-const projectCatalog = {
-  projects: [
-    { server: 'oracle', name: 'Ask Nomi', directory: '/home/ubuntu/Documents/GitHub/asknomi', members: ['asknomi', 'asknomi-api', 'asknomi-landing'].map(name => '/home/ubuntu/Documents/GitHub/' + name) },
-    { server: 'oracle', name: 'Beyond Visual', directory: '/home/ubuntu/Documents/GitHub/beyondvisual' },
-    { server: 'oracle', name: 'General', directory: '/home/ubuntu/Documents/GitHub/personal' },
-    { server: 'studio', name: 'Cue', group: 'Experiments', directory: '/Users/saikrishnabolla/Documents/GitHub/cue' },
-    { server: 'studio', name: 'Hermes', group: 'Experiments', directory: '/Users/saikrishnabolla/Documents/GitHub/hermes' },
-    { server: 'oracle', name: 'OpenCode', group: 'Experiments', directory: '/home/ubuntu/Documents/GitHub/opencode-web' },
-  ],
-  excluded: [
-    { server: 'mini', directory: '/Users/asknomi' },
-    { server: 'studio', directory: '/Users/saikrishnabolla' },
-    { server: 'oracle', directory: '/home/ubuntu' },
-    { server: 'oracle', directory: '/tmp/opencode-connection-check' },
-  ],
-}
 const stripped = new Set(['authorization', 'cookie', 'proxy-authorization', 'forwarded', 'origin', 'host', 'connection', 'transfer-encoding', 'upgrade'])
 
 function projectError(status) { return Object.assign(new Error('Invalid project request'), { status }) }
 
-function experiment(input) {
+function projectEntry(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.server !== 'string' || !Object.hasOwn(names, input.server) || typeof input.directory !== 'string') throw projectError(400)
   const directory = input.directory
   if (directory.length > 4096 || !directory.startsWith('/') || /[\u0000-\u001f\u007f\\]/.test(directory)) throw projectError(400)
@@ -37,45 +21,54 @@ function experiment(input) {
   if (!normalized || normalized === '/') throw projectError(400)
   const name = input.name === undefined ? posix.basename(normalized) : input.name
   if (typeof name !== 'string' || !name.trim() || name.length > 128 || /[\u0000-\u001f\u007f]/.test(name)) throw projectError(400)
-  return { server: input.server, name: name.trim(), directory: normalized, group: 'Experiments' }
+  if (input.group !== undefined && (typeof input.group !== 'string' || !input.group.trim() || input.group.length > 128 || /[\u0000-\u001f\u007f]/.test(input.group))) throw projectError(400)
+  if (input.members !== undefined && !Array.isArray(input.members)) throw projectError(400)
+  return {
+    server: input.server, name: name.trim(), directory: normalized,
+    ...(input.group === undefined ? {} : { group: input.group.trim() }),
+    ...(input.members === undefined ? {} : { members: input.members.map(directory => projectEntry({ server: input.server, directory }).directory) }),
+  }
 }
 
 function projectStore(initial = [], save = async () => {}) {
-  let entries = []
+  let entries = [...new Map(initial.map(input => {
+    const entry = projectEntry(input)
+    return [entry.server + ':' + entry.directory, entry]
+  })).values()]
   let queue = Promise.resolve()
-  const existing = entry => [...projectCatalog.projects, ...entries].find(project => project.server === entry.server && project.directory === entry.directory)
-  for (const input of initial) {
-    const entry = experiment(input)
-    const found = existing(entry)
-    if (found && found.group !== 'Experiments') throw projectError(409)
-    if (!found) entries.push(entry)
+  const catalog = () => ({ projects: entries, excluded: [] })
+  function change(input, remove) {
+    const operation = queue.then(async () => {
+      const entry = projectEntry(input)
+      const target = entries.find(project => project.server === entry.server && project.directory === entry.directory)
+        ?? (remove ? entries.find(project => project.server === entry.server && project.members?.includes(entry.directory)) : undefined)
+      const matches = project => project.server === entry.server && project.directory === (target?.directory ?? entry.directory)
+      const found = entries.some(matches)
+      if (found !== remove) return catalog()
+      const next = remove ? entries.filter(project => !matches(project)) : [
+        ...entries,
+        entry,
+      ]
+      await save(next)
+      entries = next
+      return catalog()
+    })
+    queue = operation.catch(() => {})
+    return operation
   }
-  return {
-    catalog() { return { ...projectCatalog, projects: [...projectCatalog.projects, ...entries] } },
-    add(input) {
-      const operation = queue.then(async () => {
-        const entry = experiment(input)
-        const found = existing(entry)
-        if (found) {
-          if (found.group !== 'Experiments') throw projectError(409)
-          return found
-        }
-        const next = [...entries, entry]
-        await save(next)
-        entries = next
-        return entry
-      })
-      queue = operation.catch(() => {})
-      return operation
-    },
-  }
+  return { catalog, add: input => change(input, false), remove: input => change(input, true) }
 }
 
-export async function createExperimentStore(path) {
-  let entries = []
-  try { entries = JSON.parse(await readFile(path, 'utf8')) } catch (error) { if (error.code !== 'ENOENT') throw error }
-  if (!Array.isArray(entries)) throw new Error('Invalid experiments catalog')
-  return projectStore(entries, async next => {
+async function savedProjects(path) {
+  try {
+    const entries = JSON.parse(await readFile(path, 'utf8'))
+    if (!Array.isArray(entries)) throw new Error('Invalid project list')
+    return entries
+  } catch (error) { if (error.code !== 'ENOENT') throw error }
+}
+
+export async function createProjectStore(path) {
+  const save = async next => {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = path + '.' + randomUUID() + '.tmp'
     try {
@@ -83,55 +76,8 @@ export async function createExperimentStore(path) {
       try { await file.writeFile(JSON.stringify(next) + '\n'); await file.sync() } finally { await file.close() }
       await rename(temporary, path)
     } finally { await rm(temporary, { force: true }) }
-  })
-}
-
-function visibilityEntry(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.closed !== 'boolean') throw projectError(400)
-  const { server, directory } = experiment({ ...input, name: 'project' })
-  return { server, directory }
-}
-
-function visibilityStore(initial = [], save = async () => {}) {
-  let entries = []
-  let queue = Promise.resolve()
-  for (const input of initial) {
-    const entry = visibilityEntry({ ...input, closed: true })
-    if (!entries.some(value => value.server === entry.server && value.directory === entry.directory)) entries.push(entry)
   }
-  const read = () => ({ closed: entries })
-  return {
-    read,
-    set(input) {
-      const operation = queue.then(async () => {
-        const entry = visibilityEntry(input)
-        const matches = value => value.server === entry.server && value.directory === entry.directory
-        const found = entries.some(matches)
-        if (found === input.closed) return read()
-        const next = input.closed ? [...entries, entry] : entries.filter(value => !matches(value))
-        await save(next)
-        entries = next
-        return read()
-      })
-      queue = operation.catch(() => {})
-      return operation
-    },
-  }
-}
-
-export async function createProjectVisibilityStore(path) {
-  let entries = []
-  try { entries = JSON.parse(await readFile(path, 'utf8')) } catch (error) { if (error.code !== 'ENOENT') throw error }
-  if (!Array.isArray(entries)) throw new Error('Invalid project visibility state')
-  return visibilityStore(entries, async next => {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    const temporary = path + '.' + randomUUID() + '.tmp'
-    try {
-      const file = await open(temporary, 'wx', 0o600)
-      try { await file.writeFile(JSON.stringify(next) + '\n'); await file.sync() } finally { await file.close() }
-      await rename(temporary, path)
-    } finally { await rm(temporary, { force: true }) }
-  })
+  return projectStore(await savedProjects(path) ?? [], save)
 }
 
 async function readProject(req) {
@@ -146,7 +92,7 @@ async function readProject(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { throw projectError(400) }
 }
 
-export function createGateway(connections, web = 'http://127.0.0.1:49375', auth, projects = projectStore(), visibility = visibilityStore()) {
+export function createGateway(connections, web = 'http://127.0.0.1:49375', auth, projects = projectStore()) {
   const targets = Object.fromEntries(Object.keys(names).map(id => {
     const value = connections[id]
     if (!value?.password || !URL.canParse(value.url)) throw new Error(`Missing connection: ${id}`)
@@ -169,9 +115,7 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
     if (authRoute && !upgrade) return { authRoute: true }
     if (pathname === '/_desk/servers' && req.url.split('?')[0] === pathname && !upgrade && req.method === 'GET') return { metadata: true }
     if (pathname === '/_desk/projects' && req.url === pathname && !upgrade && req.method === 'GET') return { projects: true }
-    if (pathname === '/_desk/projects/experiments' && req.url === pathname && !upgrade && req.method === 'POST') return { addExperiment: true }
-    if (pathname === '/_desk/projects/visibility' && req.url === pathname && !upgrade && req.method === 'GET') return { visibility: true }
-    if (pathname === '/_desk/projects/visibility' && req.url === pathname && !upgrade && req.method === 'POST') return { setVisibility: true }
+    if (pathname === '/_desk/projects' && req.url === pathname && !upgrade && ['POST', 'DELETE'].includes(req.method)) return { changeProject: true }
     if (req.url.startsWith(prefix)) {
       const match = /^\/_desk\/server\/(oracle|studio|mini)(\/api(?:[/?].*)?)$/.exec(req.url)
       if (!match) return { status: 404 }
@@ -213,7 +157,7 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
     }
     if (auth && await auth.handle(req, res)) return
     if (auth && !auth.authenticated(req)) {
-      if (route.projects || route.addExperiment || route.visibility || route.setVisibility) return fail(401)
+      if (route.projects || route.changeProject) return fail(401)
       return auth.challenge(req, res)
     }
     if (route.authRoute) {
@@ -225,19 +169,11 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
       res.end(JSON.stringify(route.projects ? projects.catalog() : { servers: Object.entries(names).map(([id, name]) => ({ id, name })) }))
       return
     }
-    if (route.visibility || route.setVisibility) {
+    if (route.changeProject) {
       try {
-        const state = route.setVisibility ? await visibility.set(await readProject(req)) : visibility.read()
+        const catalog = await projects[req.method === 'DELETE' ? 'remove' : 'add'](await readProject(req))
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
-        res.end(JSON.stringify(state))
-      } catch (error) { fail(error.status || 500) }
-      return
-    }
-    if (route.addExperiment) {
-      try {
-        const project = await projects.add(await readProject(req))
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
-        res.end(JSON.stringify(project))
+        res.end(JSON.stringify(catalog))
       } catch (error) { fail(error.status || 500) }
       return
     }
@@ -286,7 +222,6 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = JSON.parse(await readFile(process.env.DESK_CONNECTIONS_FILE, 'utf8'))
   const auth = process.env.DESK_AUTH_MODE === 'tailscale' ? undefined : await createDeskAuth(process.env.DESK_AUTH_FILE)
-  const projects = await createExperimentStore(join(dirname(process.env.DESK_CONNECTIONS_FILE), 'experiments.json'))
-  const visibility = await createProjectVisibilityStore(join(dirname(process.env.DESK_CONNECTIONS_FILE), 'project-visibility.json'))
-  createGateway(config, undefined, auth, projects, visibility).listen(49377, '127.0.0.1', () => console.log('Private OpenCode gateway ready'))
+  const projects = await createProjectStore(join(dirname(process.env.DESK_CONNECTIONS_FILE), 'projects.json'))
+  createGateway(config, undefined, auth, projects).listen(49377, '127.0.0.1', () => console.log('Private OpenCode gateway ready'))
 }

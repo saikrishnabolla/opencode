@@ -2,8 +2,6 @@ import { DESKTOP_NATIVE_ENGLISH } from "./desktop-native"
 
 export const dict = {
   ...DESKTOP_NATIVE_ENGLISH,
-  "project.visibility.syncError": "Project visibility did not sync",
-  "project.visibility.syncRetry": "Check the connection and try again.",
   "session.location.unavailable": "Session location unavailable",
   "session.location.description": "Choose another directory to continue this session.",
   "session.location.choose": "Choose directory",
@@ -648,6 +646,14 @@ export const dict = {
   "common.time.hoursAgo.short": "{{count}}h ago",
   "common.time.daysAgo.short": "{{count}}d ago",
 
+  "sidebar.projects.add": "Add project",
+  "sidebar.projects.addOn": "Add project on {{server}}",
+  "sidebar.projects.chooseServer": "Choose a server for the project",
+  "sidebar.projects.loadError": "Could not load projects. Click to retry.",
+  "sidebar.projects.removeAction": "Remove from projects",
+  "sidebar.projects.remove": "Remove {{project}} from projects",
+  "sidebar.projects.removeHelp": "Remove from the shared list. Files and chats are kept.",
+  "sidebar.projects.updateError": "Could not update the project list. Try again.",
   "sidebar.projects.more": "Show more",
   "sidebar.projects.search": "Search projects and sessions",
   "sidebar.projects.manage": "Manage projects and servers",

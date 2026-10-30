@@ -44,15 +44,11 @@ Create `/home/ubuntu/.config/opencode-desk` with mode `0700`. Store `connections
 
 Replace placeholders privately; never commit this file. Oracle's backend CORS list is `["https://personal-cloud.tail580d9e.ts.net:8500", "https://desk.saibolla.com"]`. The gateway authenticates upstream requests itself and does not send backend passwords to the browser. There is no separate website password; access depends on private Tailscale routing and its access policy.
 
-Restore `experiments.json` beside `connections.json`, also at mode `0600`, to retain added folders. The current initial entry is:
+Restore `projects.json` beside `connections.json`, at mode `0600`, to retain the shared project list. Without that file the list starts empty. Before upgrading the old deployment, copy its current project selection into this file once; keep legacy files with the rollback backup. The app does not read them or restore default projects.
 
-```json
-[{"server":"oracle","name":"Hackathons","directory":"/home/ubuntu/Documents/GitHub/hackathons","group":"Experiments"}]
-```
+Adding a project includes it in the shared list. Removing it removes only that entry, preserving its files and chats. Browsers refresh the list on focus and every 30 seconds.
 
-Closed projects are shared across browsers in `project-visibility.json` beside `connections.json`, at mode `0600`. Back up this file privately. Browsers refresh visibility every five seconds and on focus. Closing a project hides it without deleting files or chats.
-
-Defaults live in `script/opencode-desk-gateway.mjs`: Ask Nomi groups `asknomi`, `asknomi-api`, and `asknomi-landing` on Oracle. Oracle is the primary code and development host; the Mini handles Apple-specific simulator, build, and deployment work through the existing authorized connection. General and Beyond Visual also use Oracle; personal experiments use their catalogued host. Adding an experiment stores a folder reference, not a clone or file sync. Ensure those folders exist on the corresponding machine. The catalog may retain a folder whose repository has been removed.
+Projects are saved in `projects.json`, not in the source code. Adding a project stores a folder reference, not a clone or file sync. The folder must exist on its selected machine.
 
 ## Services and HTTPS
 
@@ -91,11 +87,11 @@ Port 8444 is the separate CLIProxyAPI service; restore it using the personal rep
 ```sh
 node --test script/opencode-desk-gateway.test.mjs
 cd packages/app
-/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/runtime/server/managed-visibility.test.ts ./src/runtime/server/registry.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
+/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/runtime/server/registry.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
 /home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run typecheck
 ```
 
-Check service status, effective `MemoryHigh`/`MemoryMax` on `opencode.service` and `app.slice`, and `tailscale serve status`. From an authorized tailnet device, open `https://desk.saibolla.com`, confirm all three servers respond through `/_desk/server/<id>/api/info`, and verify the sidebar catalog and experiment folders. Backend `/api/config` should report `background_compaction: true`. Do not publish credentials in verification output.
+Check service status, effective `MemoryHigh`/`MemoryMax` on `opencode.service` and `app.slice`, and `tailscale serve status`. From an authorized tailnet device, open `https://desk.saibolla.com`, confirm all three servers respond through `/_desk/server/<id>/api/info`, and verify the shared project list and add/remove controls. Backend `/api/config` should report `background_compaction: true`. Do not publish credentials in verification output.
 
 Commit customizations on `unified-project-sidebar`. Keep the tree clean before an upstream merge; resolve conflicts without dropping gateway, catalog, or restart-policy changes:
 
