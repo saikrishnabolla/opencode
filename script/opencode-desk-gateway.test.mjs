@@ -2,10 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createGateway, createProjectStore } from './opencode-desk-gateway.mjs'
+import { createGateway } from './opencode-desk-gateway.mjs'
 
 let upstreamRequests = 0
 const upstream = http.createServer((req, res) => {
@@ -37,108 +34,22 @@ const call = (path, headers={}, method='GET', body, targetPort=port) => new Prom
  });req.on('error',reject);req.end(body)
 })
 
-test('metadata contains only fixed server identities, never credentials',async()=> {
- const res=await call('/_desk/servers'); assert.equal(res.status,200)
- assert.deepEqual(JSON.parse(res.body).servers.map(s=>s.id),['oracle','studio','mini'])
- assert.equal(res.body.includes('test-only'),false);assert.equal(res.headers['cache-control'],'no-store')
-})
-test('starts with no default projects or machine-specific exclusions',async()=> {
- const res=await call('/_desk/projects');assert.equal(res.status,200)
- assert.deepEqual(JSON.parse(res.body),{projects:[]})
- assert.equal(res.headers['cache-control'],'no-store')
-})
 test('retires the offline worker without causing a page reload loop',async()=> {
  const res=await call('/sw.js');assert.equal(res.status,200)
  assert.match(res.body,/registration.unregister/)
  assert.doesNotMatch(res.body,/client.navigate|clients.matchAll/)
  assert.equal(res.headers['cache-control'],'no-store')
 })
-test('shares one persistent project list and removes entries without touching backends',async()=> {
- const directory=await mkdtemp(join(tmpdir(),'desk-projects-'))
- const path=join(directory,'private','projects.json')
- const store=await createProjectStore(path)
- const projectGateway=createGateway(Object.fromEntries(['oracle','studio','mini'].map(id=>[id,{url,password:'test-only'}])),url,store)
- projectGateway.listen(0,'127.0.0.1');await once(projectGateway,'listening')
- const request=(method='GET',input)=>call('/_desk/projects',{origin,'content-type':'application/json'},method,input===undefined ? undefined : JSON.stringify(input),projectGateway.address().port)
- try {
-  const before=upstreamRequests
-  const sample={server:'oracle',directory:'/projects/sample',name:'Sample',members:['/projects/sample-api']}
-  await request('POST',sample)
-  const original=JSON.parse((await request()).body)
-  const input={server:'studio',directory:'/Users/test/hackathons/',name:'Hackathons'}
-  const first=await request('POST',input);assert.equal(first.status,200)
-  assert.deepEqual(JSON.parse(first.body).projects.at(-1),{server:'studio',directory:'/Users/test/hackathons',name:'Hackathons'})
-  assert.equal((await request('POST',input)).status,200)
-  const concurrent=await Promise.all(['One','Two'].map(name=>request('POST',{server:'oracle',directory:'/work/'+name})))
-  assert.deepEqual(concurrent.map(result=>result.status),[200,200])
-  const catalog=JSON.parse((await request()).body)
-  assert.equal(catalog.projects.length,4)
-  assert.equal(catalog.projects.filter(project=>project.name==='Hackathons').length,1)
-  assert.deepEqual((await createProjectStore(path)).catalog(),catalog)
-  const savedProject=original.projects[0]
-  assert.equal((await request('DELETE',{server:savedProject.server,directory:savedProject.directory+'/'})).status,200)
-  assert.equal((await request('DELETE',savedProject)).status,200)
-  await request('DELETE',input)
-  const removed=JSON.parse((await request()).body)
-  assert.equal(removed.projects.some(project=>project.directory===savedProject.directory || project.name==='Hackathons'),false)
-  assert.deepEqual((await createProjectStore(path)).catalog(),removed)
-  assert.deepEqual(JSON.parse((await request('POST',savedProject)).body).projects.at(-1),savedProject)
-  assert.equal((await request('DELETE',{server:savedProject.server,directory:savedProject.members[0]})).status,200)
-  assert.equal(JSON.parse((await request()).body).projects.some(project=>project.directory===savedProject.directory),false)
-  assert.equal(upstreamRequests,before)
-  assert.equal((await stat(path)).mode & 0o777,0o600)
-  assert.equal((await stat(join(directory,'private'))).mode & 0o777,0o700)
-  const response=await request();assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.body.includes('test-only'),false)
- } finally {projectGateway.closeAllConnections();projectGateway.close();await rm(directory,{recursive:true,force:true})}
-})
-test('loads only explicitly saved projects and never seeds or restores legacy defaults',async()=> {
- const directory=await mkdtemp(join(tmpdir(),'desk-project-list-'))
- const path=join(directory,'projects.json')
- const project={server:'oracle',directory:'/work/project',name:'My project'}
- const legacy=JSON.stringify([project])
- const visibility='[]'
- try {
-  await writeFile(join(directory,'experiments.json'),legacy)
-  await writeFile(join(directory,'project-visibility.json'),visibility)
-  const store=await createProjectStore(path)
-  assert.deepEqual(store.catalog(),{projects:[]})
-  await writeFile(path,JSON.stringify([{...project,group:'Experiments'}]))
-  assert.deepEqual((await createProjectStore(path)).catalog().projects,[project])
-  await store.add(project)
-  assert.deepEqual((await createProjectStore(path)).catalog().projects,[project])
-  await store.remove(project)
-  assert.deepEqual((await createProjectStore(path)).catalog().projects,[])
-  assert.equal(await readFile(join(directory,'experiments.json'),'utf8'),legacy)
-  assert.equal(await readFile(join(directory,'project-visibility.json'),'utf8'),visibility)
- } finally {await rm(directory,{recursive:true,force:true})}
-})
-test('validates project writes and rejects cross-site or oversized requests before changing the list',async()=> {
- const endpoint='/_desk/projects'
- const headers={origin,'content-type':'application/json'}
- for(const method of ['POST','DELETE']) {
-  for(const input of [null,[],{}, {server:'unknown',directory:'/work/hack'}, {server:'__proto__',directory:'/work/hack'}, {server:'studio',directory:'relative'}, {server:'studio',directory:'/'}, {server:'studio',directory:'/foo/..'}, {server:'studio',directory:'/work/\u0000bad'}, {server:'studio',directory:'/work/\nbad'}, {server:'studio',directory:'/work/\\bad'}, {server:'studio',directory:'/work',members:[{}]}]) {
-   assert.equal((await call(endpoint,headers,method,JSON.stringify(input))).status,400)
+test('rejects retired catalog and metadata routes without touching backends',async()=> {
+ const before=upstreamRequests
+ for(const path of ['/_desk/servers','/_desk/servers?legacy=true','/_desk/projects','/_desk/projects?legacy=true','/_desk/projects/visibility','/_desk/projects/experiments']) {
+  for(const method of ['GET','POST','DELETE']) {
+   const res=await call(path,{origin,'content-type':'application/json'},method)
+   assert.equal(res.status,404)
+   assert.equal(res.headers['cache-control'],'no-store')
   }
-  const body=JSON.stringify({server:'studio',directory:'/work/Hackathon'})
-  for(const requestHeaders of [{...headers,origin:'https://evil.test'}, {'content-type':'application/json'}, {...headers,'sec-fetch-site':'cross-site'}]) {
-   assert.equal((await call(endpoint,requestHeaders,method,body)).status,403)
-  }
-  assert.equal((await call(endpoint,{...headers,host:'evil.test'},method,body)).status,404)
-  assert.equal((await call(endpoint,{origin,'content-type':'text/plain'},method,body)).status,415)
-  assert.equal((await call(endpoint,headers,method,'{')).status,400)
-  assert.equal((await call(endpoint,headers,method,JSON.stringify({server:'studio',directory:'/'+ 'a'.repeat(9000)}))).status,413)
  }
- assert.equal(JSON.parse((await call(endpoint)).body).projects.length,0)
- assert.equal((await call('/_desk/projects/visibility')).status,404)
- assert.equal((await call('/_desk/projects/experiments',headers,'POST','{}')).status,404)
-})
-test('rejects malformed saved project lists before serving them',async()=> {
- const directory=await mkdtemp(join(tmpdir(),'desk-projects-invalid-'))
- const path=join(directory,'projects.json')
- try {
-  await writeFile(path,JSON.stringify({projects:[]}));await assert.rejects(createProjectStore(path))
-  await writeFile(path,JSON.stringify([{server:'unknown',directory:'/work'}]));await assert.rejects(createProjectStore(path))
- } finally {await rm(directory,{recursive:true,force:true})}
+ assert.equal(upstreamRequests,before)
 })
 test('injects server auth and strips caller credentials, cookies and forwarded headers',async()=> {
  const res=await call('/_desk/server/mini/api/info',{origin,authorization:'Basic attacker',cookie:'secret',forwarded:'x','x-forwarded-host':'evil'})
