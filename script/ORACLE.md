@@ -21,7 +21,7 @@ mkdir -p /home/ubuntu/.local/bin
 ln -s /home/ubuntu/.opencode/bin/opencode /home/ubuntu/.local/bin/opencode
 /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun install --frozen-lockfile
 cd packages/app
-/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/VITE_OPENCODE_SERVER_MODE=none bun run build
+VITE_OPENCODE_SERVER_MODE=none /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun run build
 ```
 
 Run builds one at a time when the host has capacity. On an existing install, keep the verified `dist` until a replacement build passes; do not build over the live directory. The commands above describe a fresh installation, not a tested disaster-recovery exercise.
