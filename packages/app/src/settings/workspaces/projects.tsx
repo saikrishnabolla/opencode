@@ -1,3 +1,6 @@
+import { changeManagedProject, managedServerId, useManagedProjects } from "@/runtime/server/managed"
+import { showToast } from "@/shell/notifications/toast"
+import { pathKey } from "@/workspaces/path-key"
 import { Show, createEffect, createMemo, on, type Component, type JSX } from "solid-js"
 import { Key } from "@solid-primitives/keyed"
 import { createStore } from "solid-js/store"
@@ -30,6 +33,9 @@ export const SettingsProjects: Component<{
   const [store, setStore] = createStore({ filter: "", others: false })
   const context = createMemo(() => global.ensureServerCtx(props.server))
 
+  const managed = () => managedServerId(window.location.origin, props.server.http.url)
+  const shared = useManagedProjects(() => !!managed())
+
   let focus: string | undefined
 
   const projects = createMemo(() => context().projects.unique())
@@ -37,9 +43,19 @@ export const SettingsProjects: Component<{
   const used = createMemo(
     () =>
       new Set(
-        context()
-          .projects.used()
-          .map((project) => project.id),
+        managed()
+          ? projects()
+              .filter((project) =>
+                shared
+                  .data?.()
+                  ?.projects.some(
+                    (entry) => entry.server === managed() && pathKey(entry.directory) === pathKey(project.worktree),
+                  ),
+              )
+              .map((project) => project.id)
+          : context()
+              .projects.used()
+              .map((project) => project.id),
       ),
   )
 
@@ -71,9 +87,18 @@ export const SettingsProjects: Component<{
       onSelect: (result) => {
         const directories = homeProjectDirectories(result)
 
-        void addProjects(context(), directories).then((project) => {
-          if (project && directories.length === 1) props.onOpenProject(project)
-        })
+        void addProjects(context(), directories)
+          .then(async (project) => {
+            if (!project) return
+            if (managed())
+              await Promise.all(
+                directories.map((directory) =>
+                  changeManagedProject(window.location.origin, props.server.http.url, directory, "POST"),
+                ),
+              )
+            if (directories.length === 1) props.onOpenProject(project)
+          })
+          .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
       },
     })
 

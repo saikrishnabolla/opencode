@@ -1,3 +1,4 @@
+import { managedServerId } from "@/runtime/server/managed"
 import { createMemo, For, type JSX, onCleanup, Show, splitProps } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -681,7 +682,11 @@ function HomeProjectRow(
               </Menu.Item>
               <Menu.Separator />
               <Menu.Item onSelect={() => props.onHideProject(props.server, props.project)}>
-                {props.language.t("common.close")}
+                {props.language.t(
+                  managedServerId(window.location.origin, props.server.http.url)
+                    ? "sidebar.projects.removeAction"
+                    : "common.close",
+                )}
               </Menu.Item>
             </Menu.Content>
           </Menu.Portal>

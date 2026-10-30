@@ -1,6 +1,20 @@
 import { DESKTOP_NATIVE_ENGLISH } from "./desktop-native"
 
 export const dict = {
+  "sidebar.projects.add": "Add project",
+  "sidebar.projects.addOn": "Add project on {{server}}",
+  "sidebar.projects.chooseServer": "Choose a server for the project",
+  "sidebar.projects.loadError": "Could not load projects. Click to retry.",
+  "sidebar.projects.removeAction": "Remove from projects",
+  "sidebar.projects.remove": "Remove {{project}} from projects",
+  "sidebar.projects.removeHelp": "Remove from the shared list. Files and chats are kept.",
+  "sidebar.projects.updateError": "Could not update the project list. Try again.",
+  "sidebar.projects.more": "Show more",
+  "sidebar.projects.search": "Search projects and sessions",
+  "sidebar.projects.manage": "Manage projects and servers",
+  "sidebar.projects.offline": "Offline",
+  "sidebar.projects.new": "New session in {{project}}",
+  "sidebar.projects.unread": "Unread",
   "experiment.voiceCalls": "Voice calls",
   "voice.call": "Call",
   "voice.mute": "Mute",
