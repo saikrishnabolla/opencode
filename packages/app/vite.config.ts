@@ -34,7 +34,6 @@ export default defineConfig({
     allowedHosts: true,
     port: 3000,
   },
-  preview: { host: "127.0.0.1", port: 49375, allowedHosts: ["personal-cloud.tail580d9e.ts.net", "desk.saibolla.com"] },
   build: {
     ...(process.env.VITE_OPENCODE_TEST_FIXTURES === "1"
       ? {

@@ -5,7 +5,7 @@
 
 ## Debugging
 
-- Restart the app or server only when the user explicitly authorizes it.
+- NEVER try to restart the app, or the server process, EVER.
 
 ## Local Dev
 

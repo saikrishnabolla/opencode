@@ -21,7 +21,7 @@ mkdir -p /home/ubuntu/.local/bin
 ln -s /home/ubuntu/.opencode/bin/opencode /home/ubuntu/.local/bin/opencode
 /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun install --frozen-lockfile
 cd packages/app
-/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun run build
+/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/VITE_OPENCODE_SERVER_MODE=none bun run build
 ```
 
 Run builds one at a time when the host has capacity. On an existing install, keep the verified `dist` until a replacement build passes; do not build over the live directory. The commands above describe a fresh installation, not a tested disaster-recovery exercise.
@@ -44,11 +44,13 @@ Create `/home/ubuntu/.config/opencode-desk` with mode `0700`. Store `connections
 
 Replace placeholders privately; never commit this file. Oracle's backend CORS list is `["https://personal-cloud.tail580d9e.ts.net:8500", "https://desk.saibolla.com"]`. The gateway authenticates upstream requests itself and does not send backend passwords to the browser. There is no separate website password; access depends on private Tailscale routing and its access policy.
 
-Restore `projects.json` beside `connections.json`, at mode `0600`, to retain the shared project list. Without that file the list starts empty. Before upgrading the old deployment, copy its current project selection into this file once; keep legacy files with the rollback backup. The app does not read them or restore default projects.
+Use OpenCode’s native Add Server dialog to connect each browser, without entering a password:
 
-Adding a project includes it in the shared list. Removing it removes only that entry, preserving its files and chats. Browsers refresh the list on focus and every 30 seconds.
+- `https://desk.saibolla.com/_desk/server/oracle`
+- `https://desk.saibolla.com/_desk/server/studio`
+- `https://desk.saibolla.com/_desk/server/mini`
 
-Projects are saved in `projects.json`, not in the source code. Adding a project stores a folder reference, not a clone or file sync. The folder must exist on its selected machine.
+Connections and project selections are saved per browser. Closing a project keeps its files, chats, and entry under Settings → Other projects. The gateway does not keep a project list.
 
 ## Services and HTTPS
 
@@ -63,7 +65,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now opencode.service opencode-web-preview.service opencode-desk.service
 ```
 
-Only restart existing services after explicit user authorization. The checkout permits authorized restarts in `packages/app/AGENTS.md`. This setup task does not authorize future restarts.
+Only restart existing services after explicit user authorization. This setup task does not authorize future restarts.
 
 The backend listens on `127.0.0.1:49374`, the built frontend on `127.0.0.1:49375`, and the gateway on `127.0.0.1:49377`. The gateway service explicitly sets `DESK_AUTH_MODE=tailscale`; no `auth.json` or password-setup route is needed in this mode.
 
@@ -77,7 +79,6 @@ Inspect `tailscale serve status` first and preserve unrelated routes. For a fres
 sudo tailscale serve --bg --tcp=443 tcp://127.0.0.1:9443
 sudo tailscale serve --bg --https=8444 http://100.104.4.120:8317
 sudo tailscale serve --bg --https=8478 http://127.0.0.1:49374
-sudo tailscale serve --bg --https=8500 http://127.0.0.1:49375
 ```
 
 Port 8444 is the separate CLIProxyAPI service; restore it using the personal repository's proxy guide before enabling that route. Do not enable Funnel or public OCI ingress. Studio and Mini must separately retain their installed backend services and private HTTPS routes.
@@ -87,13 +88,13 @@ Port 8444 is the separate CLIProxyAPI service; restore it using the personal rep
 ```sh
 node --test script/opencode-desk-gateway.test.mjs
 cd packages/app
-/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/runtime/server/registry.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
+/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun run test:unit
 /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun run typecheck:tsc
 ```
 
-Check service status, effective `MemoryHigh`/`MemoryMax` on `opencode.service` and `app.slice`, and `tailscale serve status`. From an authorized tailnet device, open `https://desk.saibolla.com`, confirm all three servers respond through `/_desk/server/<id>/api/info`, and verify the shared project list and add/remove controls. Backend `/api/config` should report `background_compaction: true`. Do not publish credentials in verification output.
+Check service status, effective `MemoryHigh`/`MemoryMax` on `opencode.service` and `app.slice`, and `tailscale serve status`. From an authorized tailnet device, open `https://desk.saibolla.com`, confirm all three servers respond through `/_desk/server/<id>/api/info`, and verify native project selection and existing chats. Backend `/api/config` should report `background_compaction: true`. Do not publish credentials in verification output.
 
-Commit customizations on `unified-project-sidebar`. Keep the tree clean before an upstream merge; resolve conflicts without dropping gateway, catalog, or restart-policy changes:
+Commit customizations on `unified-project-sidebar`. Keep the tree clean before an upstream merge; resolve conflicts without changing the upstream app source or dropping gateway deployment files:
 
 ```sh
 git remote add upstream https://github.com/anomalyco/opencode.git # once, if absent

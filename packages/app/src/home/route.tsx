@@ -1,5 +1,3 @@
-import { managedServerId } from "@/runtime/server/managed"
-import { useServers } from "@/runtime/server/registry"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Show } from "solid-js"
@@ -14,8 +12,6 @@ import { HomeSessions } from "./sessions/region"
 
 export function Home() {
   const mobile = createMediaQuery("(max-width: 767px)")
-  const servers = useServers()
-  const managed = () => servers.list.some((conn) => !!managedServerId(window.location.origin, conn.http.url))
   const home = createHomeController()
   const projects = createHomeProjectsController(home)
   const sessions = createHomeSessionsController(home)
@@ -30,7 +26,7 @@ export function Home() {
         bg-v2-background-bg-base shadow-[var(--v2-elevation-raised)]
       `}
     >
-      <Show when={mobile() || managed()}>
+      <Show when={mobile()}>
         <div class="relative z-40 -mb-3 shrink-0 px-3 pt-3">
           <HomeProjects projects={projects} scroll={scroll} dropdown />
         </div>
@@ -44,11 +40,11 @@ export function Home() {
       >
         <div
           class={`
-            mx-auto grid min-h-full w-full max-w-[1080px] gap-4 px-3
-            ${managed() ? "grid-rows-[minmax(0,1fr)] lg:px-6" : "grid-rows-[auto_minmax(0,1fr)] max-md:grid-rows-[minmax(0,1fr)] lg:grid-cols-[280px_minmax(0,720px)] lg:grid-rows-1 lg:gap-8 lg:px-6"}
+            mx-auto grid min-h-full w-full max-w-[1080px] grid-rows-[auto_minmax(0,1fr)] gap-4 px-3
+            max-md:grid-rows-[minmax(0,1fr)] lg:grid-cols-[280px_minmax(0,720px)] lg:grid-rows-1 lg:gap-8 lg:px-6
           `}
         >
-          <Show when={!mobile() && !managed()}>
+          <Show when={!mobile()}>
             <HomeProjects projects={projects} scroll={scroll} />
           </Show>
           <HomeSessions sessions={sessions} search={search} scroll={scroll} />

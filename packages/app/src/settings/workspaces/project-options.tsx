@@ -1,5 +1,3 @@
-import { changeManagedProject, managedServerId, useManagedProjects } from "@/runtime/server/managed"
-import { showToast } from "@/shell/notifications/toast"
 import { Show, type Component } from "solid-js"
 import { Icon } from "@opencode/ui/icon"
 import { IconButton } from "@opencode/ui/icon-button"
@@ -30,21 +28,12 @@ export const ProjectOptions: Component<{
   const revealProject = useRevealProject()
   const context = () => global.ensureServerCtx(props.server)
 
-  const managed = () => managedServerId(window.location.origin, props.server.http.url)
-  const shared = useManagedProjects(() => !!managed())
-
   const directories = () => [props.project.worktree, ...(props.project.sandboxes ?? [])]
 
   const added = () =>
-    managed()
-      ? !!shared
-          .data?.()
-          ?.projects.some(
-            (project) => project.server === managed() && pathKey(project.directory) === pathKey(props.project.worktree),
-          )
-      : context()
-          .projects.used()
-          .some((project) => pathKey(project.worktree) === pathKey(props.project.worktree))
+    context()
+      .projects.used()
+      .some((project) => pathKey(project.worktree) === pathKey(props.project.worktree))
 
   const hasUnread = () => directories().some((directory) => context().notification.project.hasUnread(directory))
 
@@ -54,14 +43,8 @@ export const ProjectOptions: Component<{
   }
 
   const addProject = () => {
-    const add = () => {
-      props.onAdd?.()
-      context().projects.touch(props.project.worktree)
-    }
-    if (!managed()) return add()
-    void changeManagedProject(window.location.origin, props.server.http.url, props.project.worktree, "POST")
-      .then(add)
-      .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
+    props.onAdd?.()
+    context().projects.touch(props.project.worktree)
   }
 
   return (
@@ -78,22 +61,6 @@ export const ProjectOptions: Component<{
         <Menu.Content>
           <Show when={!added()}>
             <Menu.Item onSelect={addProject}>{language.t("home.project.add")}</Menu.Item>
-          </Show>
-          <Show when={managed() && added()}>
-            <Menu.Item
-              onSelect={() =>
-                void changeManagedProject(
-                  window.location.origin,
-                  props.server.http.url,
-                  props.project.worktree,
-                  "DELETE",
-                )
-                  .then(() => context().projects.hide(props.project))
-                  .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
-              }
-            >
-              {language.t("sidebar.projects.removeAction")}
-            </Menu.Item>
           </Show>
           <Show when={props.onEdit} keyed>
             {(edit) => <Menu.Item onSelect={edit}>{language.t("common.edit")}</Menu.Item>}

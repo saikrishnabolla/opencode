@@ -1,9 +1,9 @@
 [Unit]
-Description=OpenCode project sidebar web preview
+Description=OpenCode web frontend
 After=network.target
 [Service]
 WorkingDirectory=/home/ubuntu/Documents/GitHub/opencode-web/packages/app
-ExecStart=/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run serve
+ExecStart=/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run serve --host 127.0.0.1 --port 49375 --strictPort
 Restart=on-failure
 RestartSec=5
 [Install]

@@ -1,4 +1,3 @@
-import { changeManagedProject, managedServerId } from "@/runtime/server/managed"
 import { useDirectoryPicker } from "@/workspaces/selection/picker"
 import { useServerActionsController } from "@/servers/registry/controller"
 import { useSettingsCommand } from "@/settings/command"
@@ -163,13 +162,7 @@ export function createHomeProjectsController(home: HomeController) {
         if (home.server.health(conn)?.healthy === false) return
         choose(conn)
       },
-      hide: (conn: ServerConnection.Any, project: LocalProject) => {
-        if (!managedServerId(window.location.origin, conn.http.url))
-          return home.server.context(conn).projects.hide(project)
-        void changeManagedProject(window.location.origin, conn.http.url, project.worktree, "DELETE")
-          .then(() => home.server.context(conn).projects.hide(project))
-          .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
-      },
+      hide: (conn: ServerConnection.Any, project: LocalProject) => home.server.context(conn).projects.hide(project),
       canReveal: revealProject.available,
       reveal: revealProject.reveal,
     },

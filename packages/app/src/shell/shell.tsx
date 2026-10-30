@@ -1,5 +1,3 @@
-import { ProjectSidebar } from "@/shell/layout/project-sidebar"
-import { managedServerId } from "@/runtime/server/managed"
 import { Show, startTransition, Suspense, type ParentProps } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
@@ -48,23 +46,20 @@ export default function Layout(props: ParentProps) {
   const servers = useServers()
   const tabs = useTabs()
   const mobile = createMediaQuery("(max-width: 767px)")
-  const managed = () => servers.list.some((conn) => !!managedServerId(window.location.origin, conn.http.url))
 
   const [state, setState] = createStore<{
     tabsWidth: number
-    projectsOpen: boolean
     tabsMount: HTMLElement | undefined
     tabsAside: HTMLElement | undefined
     tabsPanel: HTMLElement | undefined
   }>({
-    tabsWidth: managed() ? 300 : 276,
-    projectsOpen: false,
+    tabsWidth: 276,
     tabsMount: undefined,
     tabsAside: undefined,
     tabsPanel: undefined,
   })
 
-  const verticalTabs = () => !managed() && preferences.appearance.tabLayout() !== "horizontal" && !mobile()
+  const verticalTabs = () => preferences.appearance.tabLayout() !== "horizontal" && !mobile()
 
   const toggleSidebar = () => preferences.appearance.setSidebarOpen(!preferences.appearance.sidebarOpen())
 
@@ -226,17 +221,7 @@ export default function Layout(props: ParentProps) {
           : "max(0px, calc(8px - var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))))",
       }}
     >
-      <Titlebar verticalTabs={managed() && !mobile() ? {} : verticalTabs() ? { mount: state.tabsMount } : undefined} />
-      <Show when={managed() && mobile()}>
-        <button
-          type="button"
-          class="project-sidebar-mobile-toggle"
-          aria-expanded={state.projectsOpen}
-          onClick={() => setState("projectsOpen", !state.projectsOpen)}
-        >
-          {language.t("settings.projects.title")}
-        </button>
-      </Show>
+      <Titlebar verticalTabs={verticalTabs() ? { mount: state.tabsMount } : undefined} />
       <div class="relative flex flex-1 min-h-0 min-w-0 flex-row">
         {/* The empty inset above the panels moves the window, as the titlebar does. */}
         <Show when={dragInset()}>
@@ -246,25 +231,6 @@ export default function Layout(props: ParentProps) {
             class="absolute inset-x-0 top-0 h-[var(--shell-top-inset,8px)]"
             data-tauri-drag-region
           />
-        </Show>
-        <Show when={managed() && (!mobile() || state.projectsOpen)}>
-          <aside
-            class="relative h-full min-h-0 shrink-0"
-            classList={{ "project-sidebar-mobile": mobile() }}
-            style={{ width: `${state.tabsWidth}px` }}
-          >
-            <ProjectSidebar onNavigate={() => setState("projectsOpen", false)} />
-            <Show when={!mobile()}>
-              <ResizeHandle
-                class="-end-1"
-                direction="horizontal"
-                size={state.tabsWidth}
-                min={240}
-                max={640}
-                onResize={(width) => setState("tabsWidth", width)}
-              />
-            </Show>
-          </aside>
         </Show>
         <Show when={verticalTabs()}>
           <aside
@@ -338,9 +304,7 @@ export default function Layout(props: ParentProps) {
             <Suspense>{props.children}</Suspense>
           </PluginServerCover>
         </main>
-        <Show when={!managed()}>
-          <CollapsedSidebarToggle />
-        </Show>
+        <CollapsedSidebarToggle />
       </div>
       <PluginSlot at="window.bottom" input={{}} />
       <ToastRegion />
