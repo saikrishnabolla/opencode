@@ -40,15 +40,24 @@ test('retires the offline worker without causing a page reload loop',async()=> {
  assert.doesNotMatch(res.body,/client.navigate|clients.matchAll/)
  assert.equal(res.headers['cache-control'],'no-store')
 })
-test('rejects retired catalog and metadata routes without touching backends',async()=> {
+test('rejects retired catalog routes without touching backends',async()=> {
  const before=upstreamRequests
- for(const path of ['/_desk/servers','/_desk/servers?legacy=true','/_desk/projects','/_desk/projects?legacy=true','/_desk/projects/visibility','/_desk/projects/experiments']) {
+ for(const path of ['/_desk/servers?legacy=true','/_desk/projects','/_desk/projects?legacy=true','/_desk/projects/visibility','/_desk/projects/experiments']) {
   for(const method of ['GET','POST','DELETE']) {
    const res=await call(path,{origin,'content-type':'application/json'},method)
    assert.equal(res.status,404)
    assert.equal(res.headers['cache-control'],'no-store')
   }
  }
+ assert.equal(upstreamRequests,before)
+})
+test('discovers named servers without credentials or backend requests',async()=> {
+ const before=upstreamRequests
+ const res=await call('/_desk/servers')
+ assert.equal(res.status,200)
+ assert.equal(res.headers['cache-control'],'no-store')
+ assert.deepEqual(JSON.parse(res.body),{servers:[{id:'oracle',name:'Oracle'},{id:'studio',name:'Studio'},{id:'mini',name:'Mac Mini'}]})
+ for(const method of ['POST','DELETE']) assert.equal((await call('/_desk/servers',{origin},method)).status,404)
  assert.equal(upstreamRequests,before)
 })
 test('injects server auth and strips caller credentials, cookies and forwarded headers',async()=> {

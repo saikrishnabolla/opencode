@@ -44,13 +44,13 @@ Create `/home/ubuntu/.config/opencode-desk` with mode `0700`. Store `connections
 
 Replace placeholders privately; never commit this file. Oracle's backend CORS list is `["https://personal-cloud.tail580d9e.ts.net:8500", "https://desk.saibolla.com"]`. The gateway authenticates upstream requests itself and does not send backend passwords to the browser. There is no separate website password; access depends on private Tailscale routing and its access policy.
 
-Use OpenCode’s native Add Server dialog to connect each browser, without entering a password:
+The frontend discovers the three private connections at startup, without pairing or browser passwords:
 
 - `https://desk.saibolla.com/_desk/server/oracle`
 - `https://desk.saibolla.com/_desk/server/studio`
 - `https://desk.saibolla.com/_desk/server/mini`
 
-Connections and project selections are saved per browser. Closing a project keeps its files, chats, and entry under Settings → Other projects. The gateway does not keep a project list.
+The gateway supplies connection names; OpenCode keeps project selections per browser. Closing a project keeps its files, chats, and entry under Settings → Other projects. The gateway does not keep a project list.
 
 ## Services and HTTPS
 

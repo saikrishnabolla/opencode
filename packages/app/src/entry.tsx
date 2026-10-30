@@ -14,6 +14,7 @@ import zh from "@/runtime/i18n/zh"
 import { authFromToken } from "@/runtime/server/api"
 import pkg from "../package.json"
 import { ServerConnection } from "@/runtime/server/registry"
+import { loadManagedServers } from "@/runtime/server/managed"
 
 const getLocale = () => {
   if (typeof navigator === "undefined") return "en" as const
@@ -77,7 +78,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 if (root instanceof HTMLElement && root.dataset.opencodeMounted === undefined) {
   // Lazy chunks can import the entry chunk back under a distinct URL, so claim the root before async startup.
   root.dataset.opencodeMounted = ""
-  void loadInitialLocale().then((locale) => {
+  void Promise.all([loadInitialLocale(), loadManagedServers(location.origin)]).then(([locale, managed]) => {
     const auth = authFromToken(new URLSearchParams(location.search).get("auth_token"))
     clearAuthToken()
     const standalone = isStandalone()
@@ -102,7 +103,7 @@ if (root instanceof HTMLElement && root.dataset.opencodeMounted === undefined) {
           <AppBaseProviders locale={locale}>
             <AppInterface
               canonicalLocalServer={server ? ServerConnection.key(server) : undefined}
-              servers={server ? [server] : []}
+              servers={managed ?? (server ? [server] : [])}
             >
               <KeyboardInsets />
               {standalone && <PwaRoutePersistence />}

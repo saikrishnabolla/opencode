@@ -27,6 +27,7 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375') {
     if (req.headers.origin && req.headers.origin !== origin) return { status: 403 }
     if (protectedRoute && req.headers['sec-fetch-site'] === 'cross-site') return { status: 403 }
     if ((upgrade || !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) && req.headers.origin !== origin) return { status: 403 }
+    if (req.url === '/_desk/servers' && !upgrade && req.method === 'GET') return { metadata: true }
     if (req.url.startsWith(prefix)) {
       const match = /^\/_desk\/server\/(oracle|studio|mini)(\/api(?:[/?].*)?)$/.exec(req.url)
       if (!match) return { status: 404 }
@@ -64,6 +65,11 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375') {
     if (req.url === '/sw.js' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' })
       res.end("self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.registration.unregister()));")
+      return
+    }
+    if (route.metadata) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+      res.end(JSON.stringify({ servers: Object.entries(names).map(([id, name]) => ({ id, name })) }))
       return
     }
     const upstream = request(req, route)
