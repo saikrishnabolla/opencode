@@ -7,7 +7,7 @@ import { type LocalProject } from "@/shell/state/layout"
 import { useLanguage } from "@/runtime/i18n/language"
 import { usePlatform } from "@/runtime/platform/platform"
 import { ServerConnection } from "@/runtime/server/registry"
-import { closeHomeProject, errorMessage, homeProjectDirectories } from "@/shell/layout/helpers"
+import { errorMessage, homeProjectDirectories } from "@/shell/layout/helpers"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { showToast } from "@/shell/notifications/toast"
 import { useDialog } from "@opencode/ui/context/dialog"
@@ -47,7 +47,7 @@ export function createHomeProjectsController(home: HomeController) {
   }
 
   // An expired pairing session or a changed password signs the app out of an HTTP server; signing in again edits it,
-  // and the action that asked for sign-in continues once the dialog saves, as it does for extension servers. It continues
+  // and the action that asked for sign-in continues once the dialog saves, as it does for plugin servers. It continues
   // with the saved connection: the one it started with still carries the rejected credentials.
   function authenticate(conn: ServerConnection.Any, onConnected?: (conn: ServerConnection.Any) => void) {
     if (conn.type !== "http" || !home.server.health(conn)?.unauthorized)
@@ -66,7 +66,7 @@ export function createHomeProjectsController(home: HomeController) {
       server: conn,
       title: language.t("command.project.open"),
       multiple: true,
-      onSelect: (result) => home.project.add(conn, homeProjectDirectories(result)),
+      onSelect: (result) => void home.project.add(conn, homeProjectDirectories(result)),
     })
   }
 
@@ -80,6 +80,7 @@ export function createHomeProjectsController(home: HomeController) {
     server: {
       list: home.server.list,
       health: home.server.health,
+      label: home.server.label,
       projects: home.project.forServer,
       collapsed: (conn: ServerConnection.Any) => state().collapsed[ServerConnection.key(conn)] ?? false,
       toggleCollapsed: (conn: ServerConnection.Any) => {
@@ -99,8 +100,6 @@ export function createHomeProjectsController(home: HomeController) {
     },
     project: {
       list: home.project.list,
-      recentlyClosed: home.project.recentlyClosed,
-      homedir: home.project.homedir,
       select: (conn: ServerConnection.Any, directory: string) => {
         if (authenticate(conn, (next) => home.project.select(next, directory))) return
         home.project.select(conn, directory)
@@ -125,7 +124,7 @@ export function createHomeProjectsController(home: HomeController) {
                 Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
               )(await file.text())
 
-              const api = home.server.context(conn).sdk.api.session
+              const api = home.server.context(conn).sdk.api.experimental.session
 
               // SAFETY: the import endpoint validates the transcript, including exports written by earlier releases.
               const imported = await api.import({
@@ -164,28 +163,12 @@ export function createHomeProjectsController(home: HomeController) {
         if (home.server.health(conn)?.healthy === false) return
         choose(conn)
       },
-      close: (conn: ServerConnection.Any, directory: string) => {
-        if (managedServerId(window.location.origin, conn.http.url)) {
-          void changeManagedProject(window.location.origin, conn.http.url, directory, "DELETE")
-            .then(() => {
-              home.server.context(conn).projects.remove(directory)
-              if (home.selection.value().server === ServerConnection.key(conn) && home.selection.value().directory === directory)
-                home.selection.set({ server: ServerConnection.key(conn) })
-            })
-            .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
-          return
-        }
-        const next = closeHomeProject(
-          home.selection.value(),
-          ServerConnection.key(conn),
-          home.server.context(conn).projects,
-          directory,
-        )
-
-        if (next) home.selection.set(next)
-      },
-      move: (conn: ServerConnection.Any, worktree: string, index: number) => {
-        home.server.context(conn).projects.move(worktree, index)
+      hide: (conn: ServerConnection.Any, project: LocalProject) => {
+        if (!managedServerId(window.location.origin, conn.http.url))
+          return home.server.context(conn).projects.hide(project)
+        void changeManagedProject(window.location.origin, conn.http.url, project.worktree, "DELETE")
+          .then(() => home.server.context(conn).projects.hide(project))
+          .catch(() => showToast({ title: language.t("sidebar.projects.updateError"), variant: "error" }))
       },
       canReveal: revealProject.available,
       reveal: revealProject.reveal,

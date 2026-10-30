@@ -2,7 +2,7 @@
 
 Maintain the web source on `unified-project-sidebar` in `/home/ubuntu/Documents/GitHub/opencode-web`. Oracle is the only maintained checkout. Studio and the Mini run installed backends; they do not need this source tree.
 
-The frontend is built from this branch (currently based on 2.1.4); the three installed backends run 2.1.4. Frontend and backend versions are separate. The live frontend uses `vite preview` to serve `packages/app/dist`; it is not the hot-reloading dev server.
+The frontend is built from this branch (currently based on 2.2.4); the three installed backends run 2.2.4. Frontend and backend versions are separate. The live frontend uses `vite preview` to serve `packages/app/dist`; it is not the hot-reloading dev server.
 
 ## Install and build
 
@@ -16,7 +16,7 @@ cd opencode-web
 curl -fsSL https://bun.sh/install | bash -s 'bun-v1.4.4'
 mkdir -p /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4
 ln -s /home/ubuntu/.bun/bin /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64
-bash ./install --version 2.1.4 --no-modify-path
+bash ./install --version 2.2.4 --no-modify-path
 mkdir -p /home/ubuntu/.local/bin
 ln -s /home/ubuntu/.opencode/bin/opencode /home/ubuntu/.local/bin/opencode
 /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun install --frozen-lockfile

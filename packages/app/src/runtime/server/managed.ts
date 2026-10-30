@@ -4,10 +4,12 @@ import { Option, Schema } from "effect"
 import type { ServerConnection } from "./registry"
 
 const ManagedServers = Schema.Struct({
-  servers: Schema.Array(Schema.Struct({
-    id: Schema.Literals(["oracle", "studio", "mini"]),
-    name: Schema.NonEmptyString,
-  })),
+  servers: Schema.Array(
+    Schema.Struct({
+      id: Schema.Literals(["oracle", "studio", "mini"]),
+      name: Schema.NonEmptyString,
+    }),
+  ),
 })
 
 export async function loadManagedServers(origin: string): Promise<ServerConnection.Http[] | undefined> {
@@ -17,7 +19,9 @@ export async function loadManagedServers(origin: string): Promise<ServerConnecti
     signal: AbortSignal.timeout(10_000),
   }).catch(() => undefined)
   if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) return
-  const data = Option.getOrUndefined(Schema.decodeUnknownOption(ManagedServers)(await response.json().catch(() => undefined)))
+  const data = Option.getOrUndefined(
+    Schema.decodeUnknownOption(ManagedServers)(await response.json().catch(() => undefined)),
+  )
   if (!data || data.servers.length === 0) return
   return data.servers.map((server) => ({
     type: "http",
@@ -27,17 +31,14 @@ export async function loadManagedServers(origin: string): Promise<ServerConnecti
 }
 
 const ManagedProjects = Schema.Struct({
-  projects: Schema.Array(Schema.Struct({
-    server: Schema.Literals(["oracle", "studio", "mini"]),
-    name: Schema.NonEmptyString,
-    directory: Schema.NonEmptyString,
-    group: Schema.optional(Schema.NonEmptyString),
-    members: Schema.optional(Schema.Array(Schema.NonEmptyString)),
-  })),
-  excluded: Schema.Array(Schema.Struct({
-    server: Schema.Literals(["oracle", "studio", "mini"]),
-    directory: Schema.NonEmptyString,
-  })),
+  projects: Schema.Array(
+    Schema.Struct({
+      server: Schema.Literals(["oracle", "studio", "mini"]),
+      name: Schema.NonEmptyString,
+      directory: Schema.NonEmptyString,
+      members: Schema.optional(Schema.Array(Schema.NonEmptyString)),
+    }),
+  ),
 })
 
 export type ManagedProjectCatalog = typeof ManagedProjects.Type
@@ -49,7 +50,9 @@ export async function loadManagedProjects(origin: string): Promise<ManagedProjec
     signal: AbortSignal.timeout(10_000),
   }).catch(() => undefined)
   if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) return
-  return Option.getOrUndefined(Schema.decodeUnknownOption(ManagedProjects)(await response.json().catch(() => undefined)))
+  return Option.getOrUndefined(
+    Schema.decodeUnknownOption(ManagedProjects)(await response.json().catch(() => undefined)),
+  )
 }
 
 export function managedServerId(origin: string, serverUrl: string) {
@@ -60,7 +63,12 @@ export function managedServerId(origin: string, serverUrl: string) {
 
 export const MANAGED_PROJECTS_CHANGED = "desk-projects-changed"
 
-export async function changeManagedProject(origin: string, serverUrl: string, directory: string, method: "POST" | "DELETE") {
+export async function changeManagedProject(
+  origin: string,
+  serverUrl: string,
+  directory: string,
+  method: "POST" | "DELETE",
+) {
   const server = managedServerId(origin, serverUrl)
   if (!server) throw new Error("Choose a connected Desk server.")
   const response = await fetch(new URL("/_desk/projects", origin), {
@@ -89,7 +97,9 @@ export function useManagedProjects(enabled: () => boolean) {
     refetchOnWindowFocus: true,
     retry: false,
   }))
-  const refresh = () => { if (enabled()) void query.refetch() }
+  const refresh = () => {
+    if (enabled()) void query.refetch()
+  }
   window.addEventListener(MANAGED_PROJECTS_CHANGED, refresh)
   onCleanup(() => window.removeEventListener(MANAGED_PROJECTS_CHANGED, refresh))
   return query

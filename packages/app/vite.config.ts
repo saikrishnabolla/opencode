@@ -28,29 +28,26 @@ export default defineConfig({
     icons(channel),
     serviceWorker(fileURLToPath(new URL("./dist", import.meta.url))),
     sentry,
-  ],
+  ] as any,
   server: {
     host: "0.0.0.0",
     allowedHosts: true,
     port: 3000,
   },
-  preview: {
-    host: "127.0.0.1",
-    port: 49375,
-    allowedHosts: ["personal-cloud.tail580d9e.ts.net", "desk.saibolla.com"],
-    proxy: { "/auth": { target: "http://127.0.0.1:49374" }, "/api": { target: "http://127.0.0.1:49374", ws: true } },
-  },
+  preview: { host: "127.0.0.1", port: 49375, allowedHosts: ["personal-cloud.tail580d9e.ts.net", "desk.saibolla.com"] },
   build: {
-    rolldownOptions: process.env.VITE_OPENCODE_TEST_FIXTURES === "1"
+    ...(process.env.VITE_OPENCODE_TEST_FIXTURES === "1"
       ? {
-          input: [
-            "index.html",
-            "e2e/utils/settings-wsl.html",
-            "e2e/utils/app-direction.html",
-            "e2e/utils/windows-menu.html",
-          ],
+          rolldownOptions: {
+            input: [
+              "index.html",
+              "e2e/utils/settings-wsl.html",
+              "e2e/utils/app-direction.html",
+              "e2e/utils/windows-menu.html",
+            ],
+          },
         }
-      : undefined,
+      : {}),
     assetsDir: "_assets",
     target: "esnext",
     sourcemap: true,
