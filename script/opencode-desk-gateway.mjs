@@ -4,7 +4,6 @@ import { readFile, mkdir, open, rename, rm } from 'node:fs/promises'
 import { dirname, join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import { createDeskAuth } from './opencode-desk-auth.mjs'
 
 const origin = 'https://desk.saibolla.com'
 const prefix = '/_desk/server/'
@@ -21,11 +20,9 @@ function projectEntry(input) {
   if (!normalized || normalized === '/') throw projectError(400)
   const name = input.name === undefined ? posix.basename(normalized) : input.name
   if (typeof name !== 'string' || !name.trim() || name.length > 128 || /[\u0000-\u001f\u007f]/.test(name)) throw projectError(400)
-  if (input.group !== undefined && (typeof input.group !== 'string' || !input.group.trim() || input.group.length > 128 || /[\u0000-\u001f\u007f]/.test(input.group))) throw projectError(400)
   if (input.members !== undefined && !Array.isArray(input.members)) throw projectError(400)
   return {
     server: input.server, name: name.trim(), directory: normalized,
-    ...(input.group === undefined ? {} : { group: input.group.trim() }),
     ...(input.members === undefined ? {} : { members: input.members.map(directory => projectEntry({ server: input.server, directory }).directory) }),
   }
 }
@@ -36,7 +33,7 @@ function projectStore(initial = [], save = async () => {}) {
     return [entry.server + ':' + entry.directory, entry]
   })).values()]
   let queue = Promise.resolve()
-  const catalog = () => ({ projects: entries, excluded: [] })
+  const catalog = () => ({ projects: entries })
   function change(input, remove) {
     const operation = queue.then(async () => {
       const entry = projectEntry(input)
@@ -92,7 +89,7 @@ async function readProject(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { throw projectError(400) }
 }
 
-export function createGateway(connections, web = 'http://127.0.0.1:49375', auth, projects = projectStore()) {
+export function createGateway(connections, web = 'http://127.0.0.1:49375', projects = projectStore()) {
   const targets = Object.fromEntries(Object.keys(names).map(id => {
     const value = connections[id]
     if (!value?.password || !URL.canParse(value.url)) throw new Error(`Missing connection: ${id}`)
@@ -108,11 +105,9 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
     try { pathname = decodeURIComponent(req.url.split('?')[0]) } catch { return { status: 400 } }
     if (pathname.includes('\\') || pathname.split('/').some(part => part === '.' || part === '..')) return { status: 400 }
     const protectedRoute = pathname.startsWith('/_desk/')
-    const authRoute = pathname === '/_desk/login' || /^\/_desk\/setup\/[A-Za-z0-9_-]+$/.test(pathname)
     if (req.headers.origin && req.headers.origin !== origin) return { status: 403 }
-    if (protectedRoute && !(authRoute && req.method === 'GET') && req.headers['sec-fetch-site'] === 'cross-site') return { status: 403 }
+    if (protectedRoute && req.headers['sec-fetch-site'] === 'cross-site') return { status: 403 }
     if ((upgrade || !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) && req.headers.origin !== origin) return { status: 403 }
-    if (authRoute && !upgrade) return { authRoute: true }
     if (pathname === '/_desk/servers' && req.url.split('?')[0] === pathname && !upgrade && req.method === 'GET') return { metadata: true }
     if (pathname === '/_desk/projects' && req.url === pathname && !upgrade && req.method === 'GET') return { projects: true }
     if (pathname === '/_desk/projects' && req.url === pathname && !upgrade && ['POST', 'DELETE'].includes(req.method)) return { changeProject: true }
@@ -149,20 +144,11 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
     const route = select(req)
     const fail = status => { res.writeHead(status, { 'Cache-Control': 'no-store' }); res.end() }
     if (route.status) return fail(route.status)
-    // Desk authentication needs network navigation rather than an offline app shell.
+    // Always load the current frontend instead of a previously cached app shell.
     if (req.url === '/sw.js' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' })
       res.end("self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.registration.unregister()));")
       return
-    }
-    if (auth && await auth.handle(req, res)) return
-    if (auth && !auth.authenticated(req)) {
-      if (route.projects || route.changeProject) return fail(401)
-      return auth.challenge(req, res)
-    }
-    if (route.authRoute) {
-      if (!auth && req.method === 'GET') { res.writeHead(303, { Location: '/', 'Cache-Control': 'no-store' }); res.end(); return }
-      return fail(404)
     }
     if (route.metadata || route.projects) {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
@@ -199,7 +185,6 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
 
   server.on('upgrade', (req, socket, head) => {
     const route = select(req, true)
-    if (auth && !auth.authenticated(req)) route.status = 401
     if (route.status) { socket.end(`HTTP/1.1 ${route.status} Rejected\r\nConnection: close\r\n\r\n`); return }
     const upstream = request(req, route, true)
     upstream.on('upgrade', (response, remote, incoming) => {
@@ -221,7 +206,7 @@ export function createGateway(connections, web = 'http://127.0.0.1:49375', auth,
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = JSON.parse(await readFile(process.env.DESK_CONNECTIONS_FILE, 'utf8'))
-  const auth = process.env.DESK_AUTH_MODE === 'tailscale' ? undefined : await createDeskAuth(process.env.DESK_AUTH_FILE)
+  if (process.env.DESK_AUTH_MODE !== 'tailscale') throw new Error('Private Tailscale deployment required')
   const projects = await createProjectStore(join(dirname(process.env.DESK_CONNECTIONS_FILE), 'projects.json'))
-  createGateway(config, undefined, auth, projects).listen(49377, '127.0.0.1', () => console.log('Private OpenCode gateway ready'))
+  createGateway(config, undefined, projects).listen(49377, '127.0.0.1', () => console.log('Private OpenCode gateway ready'))
 }

@@ -5,7 +5,6 @@ import { once } from 'node:events'
 import { mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createDeskAuth } from './opencode-desk-auth.mjs'
 import { createGateway, createProjectStore } from './opencode-desk-gateway.mjs'
 
 let upstreamRequests = 0
@@ -45,7 +44,7 @@ test('metadata contains only fixed server identities, never credentials',async()
 })
 test('starts with no default projects or machine-specific exclusions',async()=> {
  const res=await call('/_desk/projects');assert.equal(res.status,200)
- assert.deepEqual(JSON.parse(res.body),{projects:[],excluded:[]})
+ assert.deepEqual(JSON.parse(res.body),{projects:[]})
  assert.equal(res.headers['cache-control'],'no-store')
 })
 test('retires the offline worker without causing a page reload loop',async()=> {
@@ -58,7 +57,7 @@ test('shares one persistent project list and removes entries without touching ba
  const directory=await mkdtemp(join(tmpdir(),'desk-projects-'))
  const path=join(directory,'private','projects.json')
  const store=await createProjectStore(path)
- const projectGateway=createGateway(Object.fromEntries(['oracle','studio','mini'].map(id=>[id,{url,password:'test-only'}])),url,undefined,store)
+ const projectGateway=createGateway(Object.fromEntries(['oracle','studio','mini'].map(id=>[id,{url,password:'test-only'}])),url,store)
  projectGateway.listen(0,'127.0.0.1');await once(projectGateway,'listening')
  const request=(method='GET',input)=>call('/_desk/projects',{origin,'content-type':'application/json'},method,input===undefined ? undefined : JSON.stringify(input),projectGateway.address().port)
  try {
@@ -102,7 +101,9 @@ test('loads only explicitly saved projects and never seeds or restores legacy de
   await writeFile(join(directory,'experiments.json'),legacy)
   await writeFile(join(directory,'project-visibility.json'),visibility)
   const store=await createProjectStore(path)
-  assert.deepEqual(store.catalog(),{projects:[],excluded:[]})
+  assert.deepEqual(store.catalog(),{projects:[]})
+  await writeFile(path,JSON.stringify([{...project,group:'Experiments'}]))
+  assert.deepEqual((await createProjectStore(path)).catalog().projects,[project])
   await store.add(project)
   assert.deepEqual((await createProjectStore(path)).catalog().projects,[project])
   await store.remove(project)
@@ -115,7 +116,7 @@ test('validates project writes and rejects cross-site or oversized requests befo
  const endpoint='/_desk/projects'
  const headers={origin,'content-type':'application/json'}
  for(const method of ['POST','DELETE']) {
-  for(const input of [null,[],{}, {server:'unknown',directory:'/work/hack'}, {server:'__proto__',directory:'/work/hack'}, {server:'studio',directory:'relative'}, {server:'studio',directory:'/'}, {server:'studio',directory:'/foo/..'}, {server:'studio',directory:'/work/\u0000bad'}, {server:'studio',directory:'/work/\nbad'}, {server:'studio',directory:'/work/\\bad'}, {server:'studio',directory:'/work',group:3}, {server:'studio',directory:'/work',members:[{}]}]) {
+  for(const input of [null,[],{}, {server:'unknown',directory:'/work/hack'}, {server:'__proto__',directory:'/work/hack'}, {server:'studio',directory:'relative'}, {server:'studio',directory:'/'}, {server:'studio',directory:'/foo/..'}, {server:'studio',directory:'/work/\u0000bad'}, {server:'studio',directory:'/work/\nbad'}, {server:'studio',directory:'/work/\\bad'}, {server:'studio',directory:'/work',members:[{}]}]) {
    assert.equal((await call(endpoint,headers,method,JSON.stringify(input))).status,400)
   }
   const body=JSON.stringify({server:'studio',directory:'/work/Hackathon'})
@@ -147,7 +148,7 @@ test('injects server auth and strips caller credentials, cookies and forwarded h
  for(const key of ['cookie','forwarded','x-forwarded-host','origin']) assert.equal(data.headers[key],undefined)
 })
 test('rejects cross-site requests, unknown upstreams, traversal and direct API bypass',async()=> {
- const cases=[['/_desk/servers',{host:'evil'},'GET',404],['/_desk/servers',{origin:'https://evil.test'},'GET',403],['/_desk/servers',{'sec-fetch-site':'cross-site'},'GET',403],['/_desk/server/mini/api/session',{},'POST',403],['/_desk/server/other/api/info',{},'GET',404],['/_desk/server/mini/%2e%2e/api/info',{},'GET',400],['/_desk/server/mini/api/%5csecret',{},'GET',400],['http://evil.test/api/info',{},'GET',400],['/api/info',{},'GET',404],['/%61pi/info',{},'GET',404],['/%61uth/connect',{},'GET',404]]
+ const cases=[['/_desk/servers',{host:'evil'},'GET',404],['/_desk/servers',{origin:'https://evil.test'},'GET',403],['/_desk/servers',{'sec-fetch-site':'cross-site'},'GET',403],['/_desk/server/mini/api/session',{},'POST',403],['/_desk/server/other/api/info',{},'GET',404],['/_desk/server/mini/%2e%2e/api/info',{},'GET',400],['/_desk/server/mini/api/%5csecret',{},'GET',400],['http://evil.test/api/info',{},'GET',400],['/_desk/login',{},'GET',404],['/_desk/setup/retired',{},'GET',404],['/api/info',{},'GET',404],['/%61pi/info',{},'GET',404],['/%61uth/connect',{},'GET',404]]
  for(const [path,headers,method,status] of cases) assert.equal((await call(path,headers,method)).status,status,path)
 })
 test('does not redirect authenticated requests to an external target',async()=> {
@@ -169,46 +170,3 @@ test('upgrades WebSockets only for the exact trusted origin',async()=> {
  });assert.equal(status,403)
 })
 test.after(()=> {for(const socket of sockets) socket.destroy();gateway.closeAllConnections();gateway.close();upstream.closeAllConnections();upstream.close()})
-
-
-test('requires one website sign-in before exposing any server, and remembers it securely',async()=> {
- const directory=await mkdtemp(join(tmpdir(),'desk-auth-'))
- const path=join(directory,'auth.json')
- await writeFile(path,JSON.stringify({key:'test-session-key',setup:'test-setup-code'}),{mode:0o600})
- const auth=await createDeskAuth(path)
- const protectedGateway=createGateway(Object.fromEntries(['oracle','studio','mini'].map(id=>[id,{url,password:'test-only'}])),url,auth)
- protectedGateway.listen(0,'127.0.0.1');await once(protectedGateway,'listening')
- const targetPort=protectedGateway.address().port
- const request=(path,headers={},method='GET',body)=>call(path,headers,method,body,targetPort)
- try {
-  assert.equal((await request('/_desk/servers')).status,401)
-  assert.equal((await request('/_desk/server/mini/api/info')).status,401)
-  assert.equal((await request('/_desk/projects')).status,401)
-  for (const method of ['POST','DELETE']) assert.equal((await request('/_desk/projects',{origin,'content-type':'application/json'},method,JSON.stringify({server:'oracle',directory:'/work/test'}))).status,401)
-  assert.match((await request('/')).body,/Sign in to Desk/)
-  const form={origin,'content-type':'application/x-www-form-urlencoded'}
-  assert.equal((await request('/_desk/setup/test-setup-code',form,'POST','password=too-short&confirm=too-short')).status,401)
-  const setup=await request('/_desk/setup/test-setup-code',form,'POST','password=test-password-long&confirm=test-password-long')
-  assert.equal(setup.status,303)
-  const rawCookie=setup.headers['set-cookie'][0]
-  for(const attribute of ['Secure','HttpOnly','SameSite=Strict','Path=/'])assert.ok(rawCookie.includes(attribute))
-  const cookie=rawCookie.split(';')[0]
-  assert.equal((await request('/_desk/servers',{cookie})).status,200)
-  assert.equal((await request('/_desk/server/mini/api/info',{cookie})).status,200)
-  assert.equal((await request('/_desk/servers',{cookie:cookie+'forged'})).status,401)
-  const malformedCookie = cookie.slice(0, cookie.lastIndexOf('.') + 1) + 'é'.repeat(43)
-  assert.equal((await request('/_desk/servers',{cookie:malformedCookie})).status,401)
-  const upgradeStatus = await new Promise((resolve,reject) => {
-   const req=http.request({host:'127.0.0.1',port:targetPort,path:'/_desk/server/studio/api/pty/test/connect',headers:{host:'desk.saibolla.com',origin,cookie:malformedCookie,connection:'Upgrade',upgrade:'websocket'}})
-   req.on('response',res=>{res.resume();resolve(res.statusCode)});req.on('error',reject);req.end()
-  })
-  assert.equal(upgradeStatus,401)
-  assert.equal((await request('/_desk/servers',{cookie})).status,200)
-  assert.equal((await request('/_desk/server/mini/api/session',{...form,cookie,origin:'https://evil.test'},'POST')).status,403)
-  const saved=JSON.parse(await readFile(path,'utf8'))
-  assert.equal(saved.setup,undefined);assert.equal(JSON.stringify(saved).includes('test-password-long'),false)
-  assert.equal((await createDeskAuth(path)).authenticated({headers:{cookie}}),true)
-  assert.equal((await request('/_desk/login',form,'POST','password=wrong')).status,401)
-  assert.equal((await request('/_desk/login',form,'POST','password=test-password-long')).status,303)
- } finally {protectedGateway.closeAllConnections();protectedGateway.close();await rm(directory,{recursive:true,force:true})}
-})
