@@ -14,7 +14,7 @@ cd /home/ubuntu/Documents/GitHub
 git clone --branch unified-project-sidebar https://github.com/saikrishnabolla/opencode.git opencode-web
 cd opencode-web
 curl -fsSL https://bun.sh/install | bash -s 'bun-v1.4.4'
-mkdir -p /home/ubuntu/.local/share/opencode-web-build
+mkdir -p /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4
 ln -s /home/ubuntu/.bun/bin /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64
 bash ./install --version 2.1.4 --no-modify-path
 mkdir -p /home/ubuntu/.local/bin
