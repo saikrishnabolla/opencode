@@ -2,7 +2,7 @@
 
 Maintain the web source on `unified-project-sidebar` in `/home/ubuntu/Documents/GitHub/opencode-web`. Oracle is the only maintained checkout. Studio and the Mini run installed backends; they do not need this source tree.
 
-The frontend is built from this branch (currently based on 2.0.32); the three installed backends run 2.1.4. Frontend and backend versions are separate. The live frontend uses `vite preview` to serve `packages/app/dist`; it is not the hot-reloading dev server.
+The frontend is built from this branch (currently based on 2.1.4); the three installed backends run 2.1.4. Frontend and backend versions are separate. The live frontend uses `vite preview` to serve `packages/app/dist`; it is not the hot-reloading dev server.
 
 ## Install and build
 
@@ -88,7 +88,7 @@ Port 8444 is the separate CLIProxyAPI service; restore it using the personal rep
 node --test script/opencode-desk-gateway.test.mjs
 cd packages/app
 /home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/runtime/server/registry.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
-/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run typecheck
+/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run typecheck:tsc
 ```
 
 Check service status, effective `MemoryHigh`/`MemoryMax` on `opencode.service` and `app.slice`, and `tailscale serve status`. From an authorized tailnet device, open `https://desk.saibolla.com`, confirm all three servers respond through `/_desk/server/<id>/api/info`, and verify the shared project list and add/remove controls. Backend `/api/config` should report `background_compaction: true`. Do not publish credentials in verification output.

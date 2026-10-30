@@ -21,6 +21,8 @@ import { changeManagedProject, managedServerId, useManagedProjects } from "@/run
 import type { ManagedProjectCatalog } from "@/runtime/server/managed"
 import { catalogProjectForDirectory, sidebarCatalog, sidebarProjects } from "./project-sidebar-catalog"
 import { useDirectoryPicker } from "@/workspaces/selection/picker"
+import "./project-sidebar.css"
+
 export function ProjectSidebar(props: { onNavigate?: () => void }) {
   const language = useLanguage()
   const servers = useServers()
