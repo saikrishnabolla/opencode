@@ -6,22 +6,22 @@ The frontend is built from this branch (currently based on 2.1.4); the three ins
 
 ## Install and build
 
-Use Ubuntu ARM64 as `ubuntu`, Node 24, Bun 1.4.2, Git, Python 3, HAProxy, Certbot with its Cloudflare DNS plugin, and Tailscale. Join the existing personal tailnet and retain its access rules. Oracle must reach Studio and the shared company Mini; the Mini must not gain access to personal systems.
+Use Ubuntu ARM64 as `ubuntu`, Node 24, Bun 1.4.4, Git, Python 3, HAProxy, Certbot with its Cloudflare DNS plugin, and Tailscale. Join the existing personal tailnet and retain its access rules. Oracle must reach Studio and the shared company Mini; the Mini must not gain access to personal systems.
 
 ```sh
 mkdir -p /home/ubuntu/Documents/GitHub
 cd /home/ubuntu/Documents/GitHub
 git clone --branch unified-project-sidebar https://github.com/saikrishnabolla/opencode.git opencode-web
 cd opencode-web
-curl -fsSL https://bun.sh/install | bash -s 'bun-v1.4.2'
+curl -fsSL https://bun.sh/install | bash -s 'bun-v1.4.4'
 mkdir -p /home/ubuntu/.local/share/opencode-web-build
-ln -s /home/ubuntu/.bun/bin /home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64
+ln -s /home/ubuntu/.bun/bin /home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64
 bash ./install --version 2.1.4 --no-modify-path
 mkdir -p /home/ubuntu/.local/bin
 ln -s /home/ubuntu/.opencode/bin/opencode /home/ubuntu/.local/bin/opencode
-/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun install --frozen-lockfile
+/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun install --frozen-lockfile
 cd packages/app
-/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run build
+/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun run build
 ```
 
 Run builds one at a time when the host has capacity. On an existing install, keep the verified `dist` until a replacement build passes; do not build over the live directory. The commands above describe a fresh installation, not a tested disaster-recovery exercise.
@@ -87,8 +87,8 @@ Port 8444 is the separate CLIProxyAPI service; restore it using the personal rep
 ```sh
 node --test script/opencode-desk-gateway.test.mjs
 cd packages/app
-/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/runtime/server/registry.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
-/home/ubuntu/.local/share/opencode-web-build/bun-linux-aarch64/bun run typecheck:tsc
+/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun test --conditions=solid --only-failures --isolate --preload ./happydom.ts ./src/runtime/server/managed.test.ts ./src/runtime/server/registry.test.ts ./src/shell/layout/project-sidebar-catalog.test.ts
+/home/ubuntu/.local/share/opencode-web-build/bun-1.4.4/bun-linux-aarch64/bun run typecheck:tsc
 ```
 
 Check service status, effective `MemoryHigh`/`MemoryMax` on `opencode.service` and `app.slice`, and `tailscale serve status`. From an authorized tailnet device, open `https://desk.saibolla.com`, confirm all three servers respond through `/_desk/server/<id>/api/info`, and verify the shared project list and add/remove controls. Backend `/api/config` should report `background_compaction: true`. Do not publish credentials in verification output.
