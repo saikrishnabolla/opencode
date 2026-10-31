@@ -862,30 +862,8 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                               />
                             </div>
                             <div class="h-4 w-full shrink-0" aria-hidden="true" />
-                            <Show when={settings.appearance.tabLayout() === "vertical"}>
-                              <SidebarProjects />
-                            </Show>
                             <div class="flex min-h-0 flex-1 flex-col gap-1">
-                              <Show
-                                when={settings.appearance.tabLayout() === "inbox"}
-                                fallback={
-                                  <TitlebarTabStrip
-                                    orientation="vertical"
-                                    tabs={tabsStore}
-                                    currentTab={currentTab()}
-                                    onNavigate={(tab, el) => {
-                                      tabs.select(tab)
-                                      el?.scrollIntoView({ behavior: "instant", block: "nearest" })
-                                    }}
-                                    onClose={(tab) => {
-                                      const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
-
-                                      if (index !== -1) tabsStoreActions.closeTab(index)
-                                    }}
-                                    onReorder={(keys) => tabsStoreActions.reorder(keys)}
-                                  />
-                                }
-                              >
+                              <Show when={settings.appearance.tabLayout() === "inbox"} fallback={<SidebarProjects />}>
                                 <SidebarInbox />
                               </Show>
                             </div>
